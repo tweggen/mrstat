@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Iterator
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import requests
 
@@ -13,11 +13,33 @@ from mrstat.http import make_session
 from mrstat.timeutil import iso
 
 
+def normalize_base_url(url: str) -> str:
+    """'https://host/', 'https://host/api/v4' -> 'https://host' (keeps a relative root like /gitlab)."""
+    url = url.strip().rstrip("/")
+    if url.endswith("/api/v4"):
+        url = url[: -len("/api/v4")]
+    return url
+
+
+def path_from_ref(ref: str | int, base: str) -> str:
+    """Accept a project/group id, a path, or a full browser URL of a project/group/MR.
+    'https://host/grp/sub/proj/-/merge_requests/1' -> 'grp/sub/proj'."""
+    ref = str(ref).strip()
+    if ref.startswith(("http://", "https://")):
+        rest = ref[len(base):] if ref.startswith(base) else urlparse(ref).path
+        ref = rest
+    ref = ref.split("/-/", 1)[0].strip("/")
+    if ref.startswith("groups/"):  # https://host/groups/<path>/-/... (older group URLs)
+        ref = ref[len("groups/"):]
+    return ref.strip("/")
+
+
 class GitLabClient:
     def __init__(self, cfg: GitLabConfig):
         if not cfg.url:
             raise ConfigError("gitlab.url is not configured (or MRSTAT_GITLAB_URL)")
-        self.api = cfg.url.rstrip("/") + "/api/v4"
+        self.base = normalize_base_url(cfg.url)
+        self.api = self.base + "/api/v4"
         headers = {"PRIVATE-TOKEN": cfg.token} if cfg.token else {}
         self.s = make_session(cfg.verify_ssl, headers)
         self.timeout = cfg.timeout
@@ -45,9 +67,8 @@ class GitLabClient:
                 break
             page = int(nxt)
 
-    @staticmethod
-    def _ref(ref: str | int) -> str:
-        return quote(str(ref), safe="")
+    def _ref(self, ref: str | int) -> str:
+        return quote(path_from_ref(ref, self.base), safe="")
 
     # -- API --------------------------------------------------------------------------
     def version(self) -> dict:

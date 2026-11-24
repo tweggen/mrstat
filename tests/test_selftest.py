@@ -107,7 +107,7 @@ def test_sso_login_page_is_recognised(server):
     routes[("GET", "/jira/rest/api/2/serverInfo")] = (
         200, "text/html; charset=utf-8", "<html><head><title>Corporate SSO Sign-In</title></head></html>")
     jira = run_all(make_cfg(base), only=["jira"], timeout=5)[0]
-    err = by_title(jira)["server reachable"].error
+    err = by_title(jira)[f"server reachable ({base}/jira/rest/api/2/serverInfo)"].error
     assert "text/html instead of JSON" in err and "Corporate SSO Sign-In" in err
 
 
@@ -135,7 +135,7 @@ def test_connection_refused():
     cfg = Config()
     cfg.gitlab.url, cfg.gitlab.token = f"http://127.0.0.1:{port}", "t"
     gl = run_all(cfg, only=["gitlab"], timeout=5)[0]
-    assert by_title(gl)["server reachable"].error == "connection refused"
+    assert by_title(gl)[f"server reachable (http://127.0.0.1:{port}/api/v4/version)"].error == "connection refused"
 
 
 def test_not_configured_and_classify():
@@ -182,3 +182,34 @@ def test_context_check_auto_only_for_ollama(server):
     base, _ = server
     llm = run_all(make_cfg(base), only=["llm"], timeout=5)[0]
     assert by_title(llm)["long prompt"].status == "skip"
+
+
+def test_base_url_and_ref_normalisation(server):
+    from mrstat.gitlab_client import normalize_base_url, path_from_ref
+    from mrstat.jira_client import normalize_base_url as jira_base
+
+    assert normalize_base_url("https://gl.corp/") == "https://gl.corp"
+    assert normalize_base_url("https://gl.corp/api/v4/") == "https://gl.corp"
+    assert path_from_ref("https://gl.corp/grp/sub/proj/-/merge_requests/4", "https://gl.corp") == "grp/sub/proj"
+    assert path_from_ref("https://gl.corp/groups/grp/sub/-/merge_requests", "https://gl.corp") == "grp/sub"
+    assert path_from_ref("https://gl.corp/gitlab/grp/proj", "https://gl.corp/gitlab") == "grp/proj"
+    assert path_from_ref(" grp/proj/ ", "x") == "grp/proj" and path_from_ref(1234, "x") == "1234"
+    assert jira_base("https://host/jira/browse/ABC-1") == "https://host/jira"
+    assert jira_base("https://host/secure/Dashboard.jspa") == "https://host"
+    assert jira_base("https://host/rest/api/2/") == "https://host"
+
+    # a project given as full browser URL and a base URL with trailing slash work end to end
+    base, _ = server
+    cfg = make_cfg(base + "/")
+    cfg.gitlab.projects = [base + "/grp/app/-/merge_requests"]
+    gl = run_all(cfg, only=["gitlab"], timeout=5)[0]
+    assert gl.status == "OK", format_results([gl], cfg)
+
+
+def test_group_url_as_base_url_is_flagged(server):
+    base, _ = server
+    cfg = make_cfg(base + "/product/backend-team")
+    gl = run_all(cfg, only=["gitlab"], timeout=5)[0]
+    steps = gl.steps
+    assert steps[0].status == "warn" and "not a group or project URL" in steps[0].hint
+    assert gl.status == "FAILED" and "HTTP 404" in steps[1].error

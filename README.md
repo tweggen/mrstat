@@ -126,12 +126,17 @@ projects = ["group/subgroup/project"]             # only needed for `sync`
 url = "https://jira.yourcorp.internal"            # if Jira lives under a path: "https://host/jira"
 ```
 
-- **URL format:** use the address as it appears in the browser, without a trailing path.
-  For Jira, if issues open at `https://host/jira/browse/ABC-1`, the URL is `https://host/jira`.
+- **URL format:** `url` is the **server address only**, e.g. `https://gitlab.yourcorp.internal`,
+  not the URL of a group or project page. A trailing slash doesn't matter, and a copied
+  `/api/v4` is removed automatically. A path is only right if GitLab itself is installed
+  under it (e.g. `https://host/gitlab`); `mrstat test` warns when the URL has a path.
+  For Jira, if issues open at `https://host/jira/browse/ABC-1`, the URL is `https://host/jira`
+  (anything from `/browse/`, `/secure/` or `/rest/api/` on is removed automatically).
+- **`projects` / `groups`:** a path (`group/subgroup/project`), a numeric ID, or simply the
+  URL copied from the browser (project, group or MR page) all work.
 - **Location:** mrstat reads `mrstat.toml` from the current directory. Otherwise pass
   `-c path\to\file.toml`, or set `MRSTAT_CONFIG`.
-- **`projects`:** use the path from the project's URL (`group/subgroup/project`) or the
-  numeric project ID. Single-MR runs (`mrstat mr <URL>`) don't need it.
+- Single-MR runs (`mrstat mr <URL>`) don't need `projects` at all.
 
 `mrstat.toml` is in `.gitignore`, so your local settings are never committed.
 

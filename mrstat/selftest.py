@@ -221,6 +221,14 @@ def test_gitlab(cfg: Config, timeout: float) -> ServiceResult:
         gl = GitLabClient(gc)
         without_retries(gl.s)
         api = gl.api
+        from urllib.parse import urlparse
+        url_path = urlparse(gl.base).path.strip("/")
+        if url_path:
+            run.add("warn", f"gitlab.url contains a path (/{url_path})",
+                    "fine if GitLab itself is installed under that path",
+                    hint="gitlab.url must be the server address only (e.g. https://gitlab.yourcorp.internal), "
+                         "not a group or project URL. Put groups in gitlab.groups and projects in "
+                         "gitlab.projects instead.")
 
         def version():
             v = _get(gl.s, api + "/version", timeout)
@@ -248,7 +256,7 @@ def test_gitlab(cfg: Config, timeout: float) -> ServiceResult:
                 return ("warn", detail + " - needs read_api")
             return detail
 
-        run.step("server reachable", version)
+        run.step(f"server reachable ({api}/version)", version)
         run.step("authentication", user)
         run.step("token", token, fatal=False, warn_only=True)
 
@@ -342,7 +350,7 @@ def test_jira(cfg: Config, timeout: float) -> ServiceResult:
                                 f"Available (outward / inward): {avail}")
             return f"{len(types)} link types, all configured phrases exist"
 
-        run.step("server reachable", server)
+        run.step(f"server reachable ({api}/serverInfo)", server)
         run.step("authentication", myself)
         run.step("projects", projects, fatal=False)
         run.step("custom fields", custom_fields, fatal=False, warn_only=True)
@@ -466,7 +474,7 @@ def test_llm(cfg: Config, timeout: float, call: bool = True,
                 return ("warn", detail + f"; unexpected content: {out.text[:100]!r}")
             return detail
 
-        run.step("server reachable (/models)", models, fatal=False, warn_only=True)
+        run.step(f"server reachable ({lc.base_url.rstrip('/')}/models)", models, fatal=False, warn_only=True)
         if not call:
             run.add("skip", "test completion", "skipped (--no-llm-call)")
             return res

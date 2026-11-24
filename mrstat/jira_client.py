@@ -11,11 +11,25 @@ from mrstat.http import make_session
 log = logging.getLogger(__name__)
 
 
+_JIRA_UI_PARTS = ("/rest/api/", "/browse/", "/secure/", "/projects/", "/issues/", "/login.jsp")
+
+
+def normalize_base_url(url: str) -> str:
+    """Strip trailing slashes and anything copied from the browser after the base URL:
+    'https://host/jira/browse/ABC-1' -> 'https://host/jira'."""
+    url = url.strip()
+    for part in _JIRA_UI_PARTS:
+        i = url.find(part)
+        if i > 0:
+            url = url[:i]
+    return url.rstrip("/")
+
+
 class JiraClient:
     def __init__(self, cfg: JiraConfig):
         if not cfg.url:
             raise ConfigError("jira.url is not configured (or MRSTAT_JIRA_URL)")
-        self.url = cfg.url.rstrip("/")
+        self.url = normalize_base_url(cfg.url)
         self.api = self.url + "/rest/api/2"
         headers = {"Accept": "application/json"}
         auth = None
