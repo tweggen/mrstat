@@ -40,6 +40,10 @@ class Comparison:
     jira_estimate_h: float = 0.0
     story_points: float = 0.0
     gl_time_spent_h: float = 0.0  # GitLab /spend time tracking on the MRs
+    llm_low_h: float = 0.0  # LLM estimate of the final changes (sum over MRs that have one)
+    llm_likely_h: float = 0.0
+    llm_high_h: float = 0.0
+    llm_mrs: int = 0  # number of MRs with an LLM estimate
 
     @property
     def ratio(self) -> float | None:
@@ -155,6 +159,15 @@ def compare(db: Database, cfg: Config, *, mrs=(), keys=(), expand: bool = True,
                 hours += r["hours"]
             row = dict(mr) if mr else {"project_id": pid, "iid": iid, "title": "(not in DB)"}
             row["hours"] = hours
+            est = conn.execute(
+                "SELECT hours_low, hours_likely, hours_high FROM llm_estimates WHERE project_id=? AND iid=? "
+                "ORDER BY created_at DESC LIMIT 1", (pid, iid)).fetchone()
+            row["llm_likely"] = est["hours_likely"] if est else None
+            if est:
+                cmp.llm_mrs += 1
+                cmp.llm_low_h += est["hours_low"]
+                cmp.llm_likely_h += est["hours_likely"]
+                cmp.llm_high_h += est["hours_high"]
             cmp.mrs.append(row)
             cmp.mr_hours += hours
             cmp.gl_time_spent_h += ((mr["gl_time_spent_s"] or 0) / 3600) if mr else 0

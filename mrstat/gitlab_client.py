@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Any, Iterator
 from urllib.parse import quote
 
+import requests
+
 from mrstat.config import ConfigError, GitLabConfig
 from mrstat.http import make_session
 from mrstat.timeutil import iso
@@ -59,6 +61,17 @@ class GitLabClient:
 
     def mr_commits(self, project_id: int, iid: int) -> Iterator[dict]:
         return self.paged(f"/projects/{project_id}/merge_requests/{iid}/commits")
+
+    def mr_diffs(self, project_id: int, iid: int) -> list[dict]:
+        """Combined diff of the MR (latest version), one entry per file.
+        Uses /diffs (GitLab >= 15.7), falls back to the older /changes endpoint."""
+        try:
+            return list(self.paged(f"/projects/{project_id}/merge_requests/{iid}/diffs"))
+        except requests.HTTPError as exc:
+            if exc.response is None or exc.response.status_code != 404:
+                raise
+        data = self.get(f"/projects/{project_id}/merge_requests/{iid}/changes")
+        return data.get("changes", [])
 
     def list_mrs(
         self,

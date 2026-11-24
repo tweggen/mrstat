@@ -5,6 +5,7 @@
   mrstat issue KEY                          Jira hierarchy of an issue vs. MRs in the DB
   mrstat sync --since 2026-01-01 [--until]  historical run over a time span
   mrstat sync --incremental                 continue from the last successful sync
+  mrstat estimate <ref> [iid] [--dry-run]   LLM estimate of an MR's final change
   mrstat recompute                          recompute efforts from stored commits (after config changes)
   mrstat report --since ... [--csv FILE]    per-person / per-MR statistics from the DB
   mrstat serve [--sync-every 3600]          web UI (+ optional periodic incremental sync)
@@ -24,6 +25,7 @@ import requests
 from mrstat import __version__
 from mrstat.config import Config, ConfigError, load
 from mrstat.db import Database
+from mrstat.llm_client import LLMError
 from mrstat.timeutil import iso, parse_date_arg
 
 log = logging.getLogger("mrstat")
@@ -87,6 +89,24 @@ def cmd_check(cfg: Config, args) -> int:
             print(f"Jira FAILED: {exc}")
     else:
         print("Jira not configured")
+    if cfg.llm.base_url:
+        from mrstat.llm_client import LLMClient
+        try:
+            c = LLMClient(cfg.llm)
+            r = c.s.get(cfg.llm.base_url.rstrip("/") + "/models", params=cfg.llm.extra_query or None,
+                        timeout=30)
+            if r.status_code < 400:
+                ids = [m.get("id") for m in (r.json().get("data") or []) if isinstance(m, dict)]
+                found = "listed" if cfg.llm.model in ids else "not in /models list (may still work)"
+                print(f"LLM OK: {cfg.llm.base_url} model {cfg.llm.model} {found}")
+            else:
+                print(f"LLM endpoint reachable, /models returned {r.status_code} "
+                      f"(not all gateways offer it; try `mrstat estimate ... ` on a small MR)")
+        except Exception as exc:  # noqa: BLE001
+            ok = False
+            print(f"LLM FAILED: {exc}")
+    else:
+        print("LLM not configured")
     print(f"Database: {cfg.db_path}")
     return 0 if ok else 1
 
@@ -108,6 +128,43 @@ def cmd_mr(cfg: Config, args) -> int:
         print(report.format_mr(detail, cmp, cfg.effort.hours_per_day))
         if cmp and args.tree:
             print(report.format_issue_tree(cmp))
+    return 0
+
+
+def cmd_estimate(cfg: Config, args) -> int:
+    from mrstat import report
+    from mrstat.estimate import Estimator, format_dry_run, format_estimate
+
+    project, iid = parse_mr_ref(args.ref, args.iid)
+    an = build(cfg, no_jira=args.no_jira)
+    pid, iid = an.analyze_mr(project, iid, with_jira=not args.no_jira)
+    llm = None
+    if not args.dry_run:
+        from mrstat.llm_client import LLMClient
+        llm = LLMClient(cfg.llm)
+    est = Estimator(cfg, an.db, an.gl, llm)
+    if args.dry_run:
+        prep = est.prepare(pid, iid)
+        print(format_dry_run(prep))
+        if args.dump_prompt:
+            with open(args.dump_prompt, "w", encoding="utf-8") as fh:
+                for m in prep.final_messages():
+                    fh.write(f"===== {m['role']} =====\n{m['content']}\n\n")
+                for i in range(len(prep.chunks)) if prep.strategy == "summarize" else []:
+                    for m in prep.summary_messages(i):
+                        fh.write(f"===== summary call {i + 1}: {m['role']} =====\n{m['content']}\n\n")
+            print(f"\nprompt written to {args.dump_prompt}")
+        return 0
+    row = est.estimate(pid, iid, force=args.force)
+    detail = report.mr_detail(an.db, pid, iid)
+    if args.json:
+        print(report.to_json({**detail, "llm_estimate": row}, None))
+        return 0
+    mr = detail["mr"]
+    commit_h = sum(e["hours"] for e in detail["effort"])
+    print(f"{mr.get('project_path')}!{iid}  {mr['title']}")
+    print(format_estimate(row, cfg.effort.hours_per_day))
+    print(f"  commit heuristic: {commit_h:.1f} h")
     return 0
 
 
@@ -140,7 +197,22 @@ def cmd_sync(cfg: Config, args) -> int:
     print(f"synced {iso(res.since)} .. {iso(res.until)}: {len(res.analyzed)} MRs, {len(res.failed)} failed")
     for pid, iid, err in res.failed:
         print(f"  FAILED {pid}!{iid}: {err}")
-    return 1 if res.failed else 0
+    failed = bool(res.failed)
+    if args.llm:
+        from mrstat.estimate import Estimator
+        from mrstat.llm_client import LLMClient
+        est = Estimator(cfg, an.db, an.gl, LLMClient(cfg.llm))
+        done = 0
+        for pid, iid in res.analyzed:
+            try:
+                if est.estimate(pid, iid):
+                    done += 1
+            except Exception as exc:  # noqa: BLE001
+                failed = True
+                log.exception("LLM estimate failed for %s!%s", pid, iid)
+                print(f"  LLM FAILED {pid}!{iid}: {exc}")
+        print(f"LLM estimates: {done} of {len(res.analyzed)} MRs")
+    return 1 if failed else 0
 
 
 def cmd_recompute(cfg: Config, args) -> int:
@@ -165,9 +237,10 @@ def cmd_report(cfg: Config, args) -> int:
                  round(r["jira_hours"], 2)] for r in rows]
     else:
         rows = queries.mr_list(db, since, until, limit=100000)
-        header = ["project", "iid", "merged_at", "hours", "days", "issues", "title"]
+        header = ["project", "iid", "merged_at", "hours", "days", "llm_hours", "issues", "title"]
         data = [[r["project_path"], r["iid"], r["merged_at"], round(r["hours"], 2), round(r["hours"] / hpd, 2),
-                 r["issues"], r["title"]] for r in rows]
+                 "" if r["llm_hours"] is None else round(r["llm_hours"], 2), r["issues"], r["title"]]
+                for r in rows]
     if args.csv:
         with open(args.csv, "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh)
@@ -185,7 +258,7 @@ def cmd_serve(cfg: Config, args) -> int:
     from mrstat.web.app import serve
 
     serve(cfg, host=args.host, port=args.port, sync_every=args.sync_every,
-          initial_since=args.initial_since)
+          initial_since=args.initial_since, with_llm=args.llm)
     return 0
 
 
@@ -212,6 +285,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_mr)
 
+    p = sub.add_parser("estimate", help="LLM effort estimate of an MR's combined diff")
+    p.add_argument("ref", help="MR URL, group/project!IID, or project path/id")
+    p.add_argument("iid", nargs="?")
+    p.add_argument("--dry-run", action="store_true", help="build the input, send nothing")
+    p.add_argument("--dump-prompt", metavar="FILE", help="with --dry-run: write the exact prompt to FILE")
+    p.add_argument("--force", action="store_true", help="re-estimate even if the input is unchanged")
+    p.add_argument("--no-jira", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_estimate)
+
     p = sub.add_parser("issue", help="Jira hierarchy of an issue vs. MRs in the DB")
     p.add_argument("key")
     p.add_argument("--json", action="store_true")
@@ -222,6 +305,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--until")
     p.add_argument("--incremental", action="store_true")
     p.add_argument("--no-jira", action="store_true")
+    p.add_argument("--llm", action="store_true", help="also LLM-estimate every synced MR")
     p.set_defaults(func=cmd_sync)
 
     sub.add_parser("recompute", help="recompute efforts from stored commits").set_defaults(func=cmd_recompute)
@@ -238,6 +322,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int, default=8080)
     p.add_argument("--sync-every", type=int, default=0, help="seconds between incremental syncs (0=off)")
     p.add_argument("--initial-since", help="start date for the very first sync")
+    p.add_argument("--llm", action="store_true", help="LLM-estimate MRs during the periodic sync")
     p.set_defaults(func=cmd_serve)
 
     args = ap.parse_args(argv)
@@ -255,6 +340,9 @@ def main(argv: list[str] | None = None) -> int:
         body = exc.response.text[:500] if exc.response is not None else ""
         print(f"HTTP error: {exc}\n{body}", file=sys.stderr)
         return 3
+    except LLMError as exc:
+        print(f"LLM error: {exc}", file=sys.stderr)
+        return 4
     except requests.RequestException as exc:
         print(f"connection error: {exc}", file=sys.stderr)
         return 3

@@ -229,7 +229,7 @@ class Analyzer:
 
     def _fetch_issue(self, key: str) -> IssueNode | None:
         jc = self.cfg.jira
-        fields = ["summary", "issuetype", "status", "parent", "subtasks", "issuelinks",
+        fields = ["summary", "description", "issuetype", "status", "parent", "subtasks", "issuelinks",
                   "timespent", "aggregatetimespent", "timeoriginalestimate",
                   "aggregatetimeoriginalestimate"]
         fields += [f for f in (jc.story_points_field, jc.epic_link_field) if f]
@@ -285,7 +285,8 @@ class Analyzer:
 
         sp = f.get(jc.story_points_field) if jc.story_points_field else None
         row = {
-            "key": key, "found": 1, "summary": f.get("summary"), "issue_type": issue_type,
+            "key": key, "found": 1, "summary": f.get("summary"),
+            "description": f.get("description"), "issue_type": issue_type,
             "status": (f.get("status") or {}).get("name"),
             "timespent_s": f.get("timespent"), "aggregate_timespent_s": f.get("aggregatetimespent"),
             "orig_estimate_s": f.get("timeoriginalestimate"),

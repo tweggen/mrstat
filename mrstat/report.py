@@ -80,6 +80,9 @@ def format_comparison(cmp: Comparison, hours_per_day: float) -> str:
     out.append(f"    {'TOTAL person days':40} {_h(cmp.mr_hours / hours_per_day)} {_h(cmp.jira_spent_h / hours_per_day)}")
     out.append(f"    Jira original estimate: {cmp.jira_estimate_h:.1f} h   story points: {cmp.story_points:g}"
                + (f"   GitLab /spend: {cmp.gl_time_spent_h:.1f} h" if cmp.gl_time_spent_h else ""))
+    if cmp.llm_mrs:
+        out.append(f"    LLM estimate ({cmp.llm_mrs}/{len(cmp.mrs)} MRs): {cmp.llm_likely_h:.1f} h "
+                   f"(range {cmp.llm_low_h:.1f}-{cmp.llm_high_h:.1f})")
     if cmp.ratio is not None:
         out.append(f"    commit effort / Jira time spent = {cmp.ratio:.2f}")
     return "\n".join(out)

@@ -16,6 +16,7 @@ class FakeGitLab:
         self.mrs = {}  # (pid, iid) -> mr dict
         self.mr_commit_map = {}  # (pid, iid) -> [commit]
         self.repo = {}  # pid -> [commit]
+        self.diffs = {}  # (pid, iid) -> [diff entries as returned by /diffs]
 
     def add_project(self, pid, path):
         self.projects[pid] = {"id": pid, "path_with_namespace": path, "web_url": f"https://gl/{path}"}
@@ -55,6 +56,9 @@ class FakeGitLab:
                 continue
             yield mr
 
+    def mr_diffs(self, pid, iid):
+        return self.diffs.get((pid, iid), [])
+
     def project_commits(self, pid, since, until, all_branches=True):
         for c in self.repo.get(pid, []):
             if since <= parse_ts(c["authored_date"]) <= until:
@@ -80,7 +84,7 @@ class FakeJira:
                 issuelinks.append({"type": {"name": "X", "outward": "-", "inward": phrase},
                                    "inwardIssue": {"key": other}})
         self.issues[key] = {"key": key, "fields": {
-            "summary": f"summary {key}", "issuetype": {"name": type_}, "status": {"name": "Done"},
+            "summary": f"summary {key}", "description": f"description of {key}", "issuetype": {"name": type_}, "status": {"name": "Done"},
             "subtasks": [{"key": s} for s in subtasks], "parent": {"key": parent} if parent else None,
             "issuelinks": issuelinks, "timespent": spent or None, "aggregatetimespent": None,
             "timeoriginalestimate": estimate or None, "aggregatetimeoriginalestimate": None}}
@@ -104,3 +108,18 @@ class FakeJira:
 
     def worklogs(self, key):
         return iter(self.wl.get(key, []))
+
+
+class FakeLLM:
+    """Stands in for LLMClient: records calls, returns canned answers in order."""
+
+    def __init__(self, answers, model="fake-model"):
+        self.answers = list(answers)
+        self.calls = []
+        self.model = model
+
+    def chat(self, messages, *, json_schema=None, schema_name="result"):
+        from mrstat.llm_client import ChatResult
+
+        self.calls.append({"messages": messages, "schema": json_schema})
+        return ChatResult(self.answers.pop(0), 100, 20)

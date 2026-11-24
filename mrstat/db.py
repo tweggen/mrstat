@@ -64,7 +64,21 @@ CREATE TABLE IF NOT EXISTS worklogs(
 CREATE INDEX IF NOT EXISTS worklogs_issue ON worklogs(issue_key);
 
 CREATE TABLE IF NOT EXISTS sync_state(scope TEXT PRIMARY KEY, value TEXT);
+
+-- one row per (MR, model, prompt version, input); the newest row is the current estimate
+CREATE TABLE IF NOT EXISTS llm_estimates(
+  project_id INTEGER NOT NULL, iid INTEGER NOT NULL, model TEXT NOT NULL,
+  prompt_version TEXT NOT NULL, input_hash TEXT NOT NULL, created_at TEXT NOT NULL,
+  hours_low REAL, hours_likely REAL, hours_high REAL, confidence TEXT,
+  breakdown TEXT, complexity TEXT, rationale TEXT,
+  strategy TEXT, input_chars INTEGER, files_included INTEGER, files_excluded INTEGER,
+  prompt_tokens INTEGER, completion_tokens INTEGER, calls INTEGER,
+  PRIMARY KEY(project_id, iid, model, prompt_version, input_hash));
+CREATE INDEX IF NOT EXISTS llm_estimates_mr ON llm_estimates(project_id, iid, created_at);
 """
+
+# columns added after the first release: (table, column, type)
+MIGRATIONS = [("issues", "description", "TEXT")]
 
 
 @dataclass(frozen=True)
@@ -86,6 +100,10 @@ class Database:
         with self.connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(SCHEMA)
+            for table, col, typ in MIGRATIONS:
+                cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+                if col not in cols:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -176,7 +194,7 @@ def mark_analyzed(conn, project_id: int, iid: int) -> None:
 
 
 def upsert_issue(conn, row: dict) -> None:
-    cols = ["key", "found", "summary", "issue_type", "status", "timespent_s",
+    cols = ["key", "found", "summary", "description", "issue_type", "status", "timespent_s",
             "aggregate_timespent_s", "orig_estimate_s", "aggregate_orig_estimate_s",
             "story_points", "web_url", "fetched_at"]
     values = [row.get(c) for c in cols]
@@ -213,3 +231,17 @@ def set_state(conn, scope: str, value: str) -> None:
         "INSERT INTO sync_state(scope, value) VALUES(?,?) ON CONFLICT(scope) DO UPDATE SET value=excluded.value",
         (scope, value),
     )
+
+
+def insert_llm_estimate(conn, row: dict) -> None:
+    cols = list(row)
+    conn.execute(
+        f"INSERT OR REPLACE INTO llm_estimates({','.join(cols)}) VALUES({','.join('?' * len(cols))})",
+        [row[c] for c in cols],
+    )
+
+
+def latest_llm_estimate(conn, project_id: int, iid: int):
+    return conn.execute(
+        "SELECT * FROM llm_estimates WHERE project_id=? AND iid=? ORDER BY created_at DESC LIMIT 1",
+        (project_id, iid)).fetchone()

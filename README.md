@@ -52,6 +52,30 @@ counted once, so no double counting via aggregate fields), overall and per perso
 Expect the ratio to be < 1: Jira time typically includes analysis, reviews, testing and
 meetings that produce no commits. The ratio is most useful compared across teams/time.
 
+### 4. LLM estimate of the final change (optional)
+
+An LLM gets the MR's **combined diff** (target branch → final result), the MR text and the
+referenced tickets' summary and description, and estimates the hours an experienced
+developer who knows the codebase would need for exactly this change (low / likely / high,
+with a breakdown and rationale).
+
+* **Blind:** the model never sees Jira estimates, story points, booked time or the commit
+  heuristic, so it can't anchor on them.
+* **Final change only:** trial and error that left no trace in the result is deliberately
+  not part of the estimate. The gap between LLM estimate and commit/Jira hours is
+  therefore the effort the result doesn't show (searching, rework, reviews, coordination).
+* **Filtered input:** lock files, vendored and generated code, binaries and deleted files
+  are listed with their line counts but their content is not sent (`llm.exclude`).
+* **Large MRs:** above `max_input_chars` the diff is summarized per file group first and
+  the estimate is made from the summaries (`large_mr_strategy`). Nothing is cut silently;
+  the stored estimate records the strategy used.
+* **Cached:** each estimate is stored with a hash of its input, model and prompt version,
+  and only recomputed when one of them changes (or with `--force`).
+
+Any OpenAI-compatible `/chat/completions` endpoint works (internal gateway, Azure OpenAI,
+vLLM, Ollama, LiteLLM, ...). Source code is sent to that endpoint, so use one your company
+has approved; `--dry-run` shows exactly what would be sent.
+
 ## Install (Windows 11 or Linux)
 
 ```powershell
@@ -163,6 +187,30 @@ Jira OK: https://jira.yourcorp.internal version 9.x as your.login
 
 The `check` output contains server versions and project keys, but no tokens.
 
+### 5. LLM endpoint (optional)
+
+```toml
+[llm]
+base_url = "https://llm-gateway.yourcorp.internal/v1"   # "/chat/completions" is appended
+model = "your-model-name"
+```
+
+```powershell
+$env:MRSTAT_LLM_API_KEY = "..."
+```
+
+Common variants:
+
+| Endpoint | Settings |
+|---|---|
+| OpenAI-compatible gateway, LiteLLM, vLLM | `base_url = "https://host/v1"` |
+| Ollama | `base_url = "http://host:11434/v1"`, no key |
+| Azure OpenAI | `base_url = "https://<resource>.openai.azure.com/openai/deployments/<deployment>"`, `api_key_header = "api-key"`, `extra_query = { "api-version" = "2024-10-21" }` |
+| Newer OpenAI reasoning models | `max_tokens_param = "max_completion_tokens"`, `temperature = "omit"` |
+| Server rejects `response_format` | `response_format = "json_object"` or `"none"` |
+
+`mrstat check` also tests the LLM endpoint (via `/models`, which not every gateway offers).
+
 ## Analyze single MRs and issues
 
 ```powershell
@@ -170,6 +218,10 @@ mrstat -v mr https://gitlab.yourcorp.internal/group/project/-/merge_requests/123
 mrstat mr group/project!1234 --json
 mrstat mr group/project!1234 --no-expand     # only this MR, not the whole ticket cluster
 mrstat issue ABC-4711
+
+# LLM estimate
+mrstat estimate group/project!1234 --dry-run --dump-prompt prompt.txt   # sends nothing
+mrstat estimate group/project!1234
 ```
 
 ## Statistics database
@@ -177,6 +229,7 @@ mrstat issue ABC-4711
 ```bash
 mrstat sync --since 2026-01-01 --until 2026-07-01   # historical (MRs merged in the span)
 mrstat sync --incremental                           # from the last successful sync
+mrstat sync --incremental --llm                     # ... and LLM-estimate the synced MRs
 mrstat report --by person --since 2026-01-01 --csv persons.csv
 mrstat recompute                                    # after changing [effort] or [identities]
 mrstat serve --port 8080                            # web UI on http://127.0.0.1:8080
@@ -191,7 +244,8 @@ docker compose up -d --build
 ```
 
 The container serves the UI on port 8080 and runs an incremental sync every
-`MRSTAT_SYNC_EVERY` seconds (first run from `MRSTAT_INITIAL_SINCE`). Data lives in the
+`MRSTAT_SYNC_EVERY` seconds (first run from `MRSTAT_INITIAL_SINCE`). To also run LLM
+estimates during the sync, add `--llm` to the `serve` command. Data lives in the
 `/data` volume. JSON API: `/api/mrs`, `/api/persons`, `/api/mr/{project_id}/{iid}`,
 `/api/issue/{KEY}`, `/api/sync`.
 

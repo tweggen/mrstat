@@ -13,7 +13,7 @@
   <div class="tile"><div class="v">{{ '%.1f'|format(total_hours / hpd) }}</div><div class="l">person days</div></div>
 </div>
 <table>
-  <tr><th>Merged</th><th>MR</th><th>Title</th><th>Persons</th><th>Issues</th><th class="n">Commits</th><th class="n">Hours</th><th class="n">Days</th></tr>
+  <tr><th>Merged</th><th>MR</th><th>Title</th><th>Persons</th><th>Issues</th><th class="n">Commits</th><th class="n">Hours</th><th class="n">Days</th><th class="n">LLM h</th></tr>
   {% for m in mrs %}
   <tr>
     <td class="muted">{{ (m.merged_at or '')[:10] }}</td>
@@ -24,9 +24,10 @@
     <td class="n">{{ m.commits }}</td>
     <td class="n">{{ '%.1f'|format(m.hours) }}</td>
     <td class="n">{{ '%.2f'|format(m.hours / hpd) }}</td>
+    <td class="n">{{ '%.1f'|format(m.llm_hours) if m.llm_hours is not none else '' }}</td>
   </tr>
   {% else %}
-  <tr><td colspan="8" class="muted">No merge requests in the database yet. Run <code>mrstat sync --since YYYY-MM-DD</code> or analyze one above.</td></tr>
+  <tr><td colspan="9" class="muted">No merge requests in the database yet. Run <code>mrstat sync --since YYYY-MM-DD</code> or analyze one above.</td></tr>
   {% endfor %}
 </table>
 {% endblock %}

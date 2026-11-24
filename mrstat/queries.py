@@ -25,7 +25,9 @@ def mr_list(db: Database, since=None, until=None, project: str | None = None,
              COALESCE((SELECT SUM(hours) FROM mr_effort e WHERE e.project_id=m.project_id AND e.iid=m.iid), 0) AS hours,
              (SELECT COUNT(*) FROM mr_commits c WHERE c.project_id=m.project_id AND c.iid=m.iid) AS commits,
              (SELECT GROUP_CONCAT(issue_key, ' ') FROM mr_issues i WHERE i.project_id=m.project_id AND i.iid=m.iid) AS issues,
-             (SELECT GROUP_CONCAT(person, ', ') FROM mr_effort e WHERE e.project_id=m.project_id AND e.iid=m.iid) AS persons
+             (SELECT GROUP_CONCAT(person, ', ') FROM mr_effort e WHERE e.project_id=m.project_id AND e.iid=m.iid) AS persons,
+             (SELECT hours_likely FROM llm_estimates l WHERE l.project_id=m.project_id AND l.iid=m.iid
+               ORDER BY created_at DESC LIMIT 1) AS llm_hours
       FROM mrs m LEFT JOIN projects p ON p.id=m.project_id WHERE 1=1"""
     sql += _window("COALESCE(m.merged_at, m.updated_at)", since, until, params)
     if project:
