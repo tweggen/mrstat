@@ -52,23 +52,125 @@ counted once, so no double counting via aggregate fields), overall and per perso
 Expect the ratio to be < 1: Jira time typically includes analysis, reviews, testing and
 meetings that produce no commits. The ratio is most useful compared across teams/time.
 
-## Install and try (Windows 11 or Linux)
+## Install (Windows 11 or Linux)
 
 ```powershell
+git clone https://github.com/tweggen/mrstat.git
+cd mrstat
 py -m venv .venv
-.venv\Scripts\activate
+.venv\Scripts\activate          # Linux: source .venv/bin/activate
 pip install -e .[web]
-copy mrstat.example.toml mrstat.toml     # edit URLs, projects, Jira fields
-$env:MRSTAT_GITLAB_TOKEN = "glpat-..."   # read_api scope is sufficient
-$env:MRSTAT_JIRA_TOKEN   = "..."         # Jira PAT (or MRSTAT_JIRA_USERNAME/PASSWORD)
-
-mrstat check
-mrstat mr https://gitlab.example.internal/product/backend/-/merge_requests/1234 --tree
-mrstat mr product/backend!1234 --json
-mrstat issue APP-4711
 ```
 
-Internal CA: set `verify_ssl = "C:/path/ca.pem"` in the config (or `REQUESTS_CA_BUNDLE`).
+To update later: `git pull` and `pip install -e .[web]` again.
+
+## Configure GitLab and Jira
+
+You set the two server URLs in a config file and pass the tokens as environment variables.
+mrstat adds the API paths itself (`/api/v4` for GitLab, `/rest/api/2` for Jira), so you
+only give the base URL you see in the browser.
+
+### 1. Config file
+
+```powershell
+copy mrstat.example.toml mrstat.toml
+notepad mrstat.toml
+```
+
+The minimum to edit:
+
+```toml
+[gitlab]
+url = "https://gitlab.yourcorp.internal"          # base URL, no /api/v4
+projects = ["group/subgroup/project"]             # only needed for `sync`
+
+[jira]
+url = "https://jira.yourcorp.internal"            # if Jira lives under a path: "https://host/jira"
+```
+
+- **URL format:** use the address as it appears in the browser, without a trailing path.
+  For Jira, if issues open at `https://host/jira/browse/ABC-1`, the URL is `https://host/jira`.
+- **Location:** mrstat reads `mrstat.toml` from the current directory. Otherwise pass
+  `-c path\to\file.toml`, or set `MRSTAT_CONFIG`.
+- **`projects`:** use the path from the project's URL (`group/subgroup/project`) or the
+  numeric project ID. Single-MR runs (`mrstat mr <URL>`) don't need it.
+
+`mrstat.toml` is in `.gitignore`, so your local settings are never committed.
+
+### 2. Tokens (as environment variables, not in the file)
+
+- **GitLab:** create a personal access token under *Avatar → Edit profile → Access Tokens*
+  with the scope `read_api`.
+- **Jira Server/Data Center:** create a personal access token under
+  *Avatar → Profile → Personal Access Tokens*. This needs Jira 8.14 or later.
+
+```powershell
+$env:MRSTAT_GITLAB_TOKEN = "glpat-xxxxxxxx"
+$env:MRSTAT_JIRA_TOKEN   = "xxxxxxxx"
+```
+
+If your Jira has no personal access tokens, use basic auth instead:
+
+```powershell
+$env:MRSTAT_JIRA_USERNAME = "your.login"
+$env:MRSTAT_JIRA_PASSWORD = "..."
+```
+
+`$env:` only lasts for the current PowerShell window. To keep a variable permanently, run
+`setx MRSTAT_GITLAB_TOKEN "glpat-..."` and open a new window. You can also override the
+URLs per session with `MRSTAT_GITLAB_URL` and `MRSTAT_JIRA_URL`, and the database path
+with `MRSTAT_DB`. (Linux: `export MRSTAT_GITLAB_TOKEN=...`.)
+
+### 3. Corporate certificates
+
+If you get SSL errors (`CERTIFICATE_VERIFY_FAILED`), Python doesn't trust your company's
+internal CA, even though the browser does. Export the root CA certificate as Base64
+`.pem`, for example from the browser's certificate viewer. Then point mrstat at it in
+each section:
+
+```toml
+[gitlab]
+verify_ssl = "C:/certs/corp-root-ca.pem"
+[jira]
+verify_ssl = "C:/certs/corp-root-ca.pem"
+```
+
+Alternatively, `pip install pip-system-certs` makes Python use the Windows certificate
+store, and you don't need the file.
+
+**Proxy:** if the internal servers are only reachable through a proxy, set
+`$env:HTTPS_PROXY`. If they're reached directly while a proxy is set for everything else,
+set `$env:NO_PROXY = "yourcorp.internal"`.
+
+### 4. Test the connection
+
+```powershell
+mrstat check
+```
+
+When it works, you should see something like:
+
+```
+GitLab OK: https://gitlab.yourcorp.internal version 17.x
+  project group/subgroup/project: id 1234
+Jira OK: https://jira.yourcorp.internal version 9.x as your.login
+  project keys used for matching (...): ABC, DEF, ...
+```
+
+- **401:** the token is wrong or expired.
+- **403:** the token lacks the scope or permissions.
+- **SSL error:** see section 3.
+
+The `check` output contains server versions and project keys, but no tokens.
+
+## Analyze single MRs and issues
+
+```powershell
+mrstat -v mr https://gitlab.yourcorp.internal/group/project/-/merge_requests/1234 --tree
+mrstat mr group/project!1234 --json
+mrstat mr group/project!1234 --no-expand     # only this MR, not the whole ticket cluster
+mrstat issue ABC-4711
+```
 
 ## Statistics database
 
