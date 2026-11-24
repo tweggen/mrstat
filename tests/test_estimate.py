@@ -140,3 +140,20 @@ def test_web_shows_estimate(env):
     page = client.get("/mr/1/1").text
     assert "LLM estimate of the final change" in page and "parser change" in page
     assert client.get("/").status_code == 200 and client.get("/issue/APP-1").status_code == 200
+
+
+def test_truncation_is_flagged(env):
+    cfg, an, gl = env
+    gl.diffs[(1, 1)] = [diff("src/big.py", "@@ -1 +1 @@ def big()\n" + "".join(
+        f"+value_{i} = compute_something({i}, factor={i % 7})\n" for i in range(800)))]
+    row = Estimator(cfg, an.db, gl, FakeLLM([GOOD], context_tokens=2048)).estimate(1, 1)
+    assert "probably truncated" in row["notes"]
+    row2 = Estimator(cfg, an.db, gl, FakeLLM([GOOD])).estimate(1, 1, force=True)
+    assert not row2["notes"] or "truncated" not in row2["notes"]
+
+
+def test_prompt_contains_facts_table(env):
+    cfg, an, gl = env
+    text = Estimator(cfg, an.db, gl).prepare(1, 1).final_messages()[1]["content"]
+    assert "src/parser.py | [code, python, modified] | raw +2 -1 | shown +2 -1" in text
+    assert "package-lock.json" in text and "not shown: matches package-lock.json" in text

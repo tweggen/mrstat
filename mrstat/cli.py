@@ -69,7 +69,8 @@ def cmd_test(cfg: Config, args) -> int:
     unknown = set(only) - set(selftest.SERVICES)
     if unknown:
         raise ValueError(f"--only: unknown service(s) {', '.join(sorted(unknown))}; use gitlab,jira,llm")
-    results = selftest.run_all(cfg, only, timeout=args.timeout, llm_call=not args.no_llm_call)
+    results = selftest.run_all(cfg, only, timeout=args.timeout, llm_call=not args.no_llm_call,
+                               check_context=True if args.context_check else None)
     if args.json:
         print(json.dumps([{"service": r.name, "url": r.url, "status": r.status,
                            "steps": [s.__dict__ for s in r.steps]} for r in results], indent=2))
@@ -243,7 +244,10 @@ def main(argv: list[str] | None = None) -> int:
                        help="test the configuration: connections to GitLab, Jira and the LLM")
     p.add_argument("--only", help="comma separated subset: gitlab,jira,llm")
     p.add_argument("--timeout", type=float, default=20.0, help="seconds per request (default 20)")
-    p.add_argument("--no-llm-call", action="store_true", help="do not send the small test completion")
+    p.add_argument("--no-llm-call", action="store_true", help="do not send any test completion")
+    p.add_argument("--context-check", action="store_true",
+                   help="send a prompt of llm.max_input_chars to detect silent truncation "
+                        "(automatic for Ollama URLs)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_test)
 

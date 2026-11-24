@@ -18,12 +18,13 @@ from dataclasses import dataclass, field
 from mrstat import db as dbm
 from mrstat.config import Config
 from mrstat.db import Database
+from mrstat.diffprep import CleanOptions, FileFacts, clean, facts_line, facts_summary
 from mrstat.llm_client import LLMClient, LLMError, parse_json_object
 from mrstat.timeutil import iso, utcnow
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v2"  # v2: cleaned diff + facts table
 
 BREAKDOWN_KEYS = ["implementation", "tests", "refactoring", "config_infra", "other"]
 
@@ -49,10 +50,16 @@ ESTIMATE_SCHEMA = {
 SYSTEM_PROMPT = """\
 You estimate software development effort for merge requests in an enterprise software product.
 
-You receive the task description (merge request text and the linked tickets), an overview of \
-the changed files, and the combined diff of the final change (target branch -> merged result). \
-Some files are listed but not shown (generated, lock files, binaries, deleted files); treat \
-them as near-zero effort unless the task clearly required hand-written work there.
+You receive the task description (merge request text and the linked tickets), a table of the \
+changed files, and the combined diff of the final change (target branch -> merged result).
+
+The diff has been cleaned automatically: whitespace-only changes, comment-only lines and \
+import/include lines are removed, and moved code is shown as a single line \
+"~ [N lines moved to/from ...]". Context is reduced to one line around each change; "@@ name" \
+lines name the function or section a change is in. The file table shows, per file, the \
+category, the raw size, what is still shown, and what was removed as noise. Some files are \
+listed but not shown at all (generated, lock files, binaries, deleted files); treat them as \
+near-zero effort unless the task clearly required hand-written work there.
 
 Estimate the hands-on effort in hours that an experienced developer who already knows this \
 codebase would need to produce exactly this final change: understanding the task, writing \
@@ -91,6 +98,7 @@ class FileEntry:
     status: str  # added | deleted | renamed | modified
     diff: str
     excluded: str | None = None  # reason, or None if the diff is sent
+    facts: FileFacts | None = None
 
 
 @dataclass
@@ -145,7 +153,29 @@ class PreparedInput:
 
 
 def _file_block(f: FileEntry) -> str:
-    return f"\n--- {f.path} ({f.status}, +{f.added} -{f.deleted})\n{f.diff.rstrip()}\n"
+    a, d = (f.facts.added, f.facts.deleted) if f.facts else (f.added, f.deleted)
+    return f"\n--- {f.path} ({f.status}, +{a} -{d})\n{f.diff.rstrip()}\n"
+
+
+def apply_cleanup(files: list[FileEntry], cfg: Config) -> None:
+    """Clean the diffs of the files that will be sent (in place) and attach facts to all."""
+    lc = cfg.llm
+    on = lc.clean_diff
+    opts = CleanOptions(whitespace=on and lc.strip_whitespace_changes, moves=on and lc.detect_moves,
+                        min_move_block=lc.min_move_block, comments=on and lc.strip_comments,
+                        imports=on and lc.strip_imports,
+                        context_lines=lc.context_lines if on else 1_000_000)
+    sent = [f for f in files if not f.excluded]
+    for f, c in zip(sent, clean([(f.path, f.status, f.diff) for f in sent], opts)):
+        f.facts = c.facts
+        f.diff = c.render()
+        if not c.hunks:
+            f.excluded = "only whitespace/comment/import changes"
+    rest = [f for f in files if f.facts is None]
+    off = CleanOptions(whitespace=False, moves=False, comments=False, imports=False,
+                       context_lines=1_000_000)
+    for f, c in zip(rest, clean([(f.path, f.status, f.diff) for f in rest], off)):
+        f.facts = c.facts
 
 
 def _count_lines(diff: str) -> tuple[int, int]:
@@ -215,12 +245,12 @@ def build_header(mr: dict, tickets: list[dict], files: list[FileEntry], cfg: Con
             if t.get("description"):
                 lines.append(_clip(t["description"], lim))
             lines.append("")
-    total_a = sum(f.added for f in files)
-    total_d = sum(f.deleted for f in files)
-    lines.append(f"# Changed files ({len(files)} files, +{total_a} -{total_d} lines)")
+    facts = [f.facts for f in files if f.facts]
+    lines.append(f"# Changed files: {facts_summary(facts)}")
     for f in files:
-        mark = f"  [not shown: {f.excluded}]" if f.excluded else ""
-        lines.append(f"{f.path}  ({f.status}, +{f.added} -{f.deleted}){mark}")
+        lines.append(facts_line(f.facts, f.excluded) if f.facts else
+                     f"{f.path} | {f.status} | +{f.added} -{f.deleted}"
+                     + (f" | not shown: {f.excluded}" if f.excluded else ""))
     return "\n".join(lines) + "\n"
 
 
@@ -257,6 +287,7 @@ class Estimator:
                 "JOIN issues i ON i.key=mi.issue_key WHERE mi.project_id=? AND mi.iid=? AND i.found=1 "
                 "ORDER BY i.key", (project_id, iid))]
         files = classify_files(self.gl.mr_diffs(project_id, iid), self.cfg)
+        apply_cleanup(files, self.cfg)
         header = build_header(dict(mr), tickets, files, self.cfg)
         prep = PreparedInput(project_id, iid, header, files, "full")
 
@@ -300,11 +331,22 @@ class Estimator:
                 return dict(hit)
 
         p_tok = c_tok = calls = 0
+        notes = list(prep.notes)
+
+        def check(msgs, res):
+            note = truncation_note(msgs, res.prompt_tokens)
+            if note:
+                log.warning("%s!%s: %s", project_id, iid, note)
+                if note not in notes:
+                    notes.append(note)
+
         summaries = None
         if prep.strategy == "summarize":
             summaries = []
             for i in range(len(prep.chunks)):
-                res = self.llm.chat(prep.summary_messages(i))
+                msgs = prep.summary_messages(i)
+                res = self.llm.chat(msgs)
+                check(msgs, res)
                 summaries.append(res.text.strip())
                 p_tok, c_tok, calls = p_tok + res.prompt_tokens, c_tok + res.completion_tokens, calls + 1
 
@@ -312,6 +354,7 @@ class Estimator:
         data = None
         for attempt in range(2):
             res = self.llm.chat(messages, json_schema=ESTIMATE_SCHEMA, schema_name="effort_estimate")
+            check(messages, res)
             p_tok, c_tok, calls = p_tok + res.prompt_tokens, c_tok + res.completion_tokens, calls + 1
             try:
                 data = validate_estimate(parse_json_object(res.text))
@@ -337,10 +380,25 @@ class Estimator:
             "files_included": len(prep.included),
             "files_excluded": len(prep.files) - len(prep.included),
             "prompt_tokens": p_tok, "completion_tokens": c_tok, "calls": calls,
+            "notes": "\n".join(notes) or None,
         }
         with self.db.connect() as conn:
             dbm.insert_llm_estimate(conn, row)
         return row
+
+
+# Code and prose take roughly 3-4 characters per token. If the server reports far fewer prompt
+# tokens than that, it most likely cut the prompt (e.g. Ollama with a small num_ctx).
+CHARS_PER_TOKEN_SUSPICIOUS = 7.0
+
+
+def truncation_note(messages: list[dict], prompt_tokens: int) -> str | None:
+    chars = sum(len(m["content"]) for m in messages)
+    if prompt_tokens and chars / prompt_tokens > CHARS_PER_TOKEN_SUSPICIOUS:
+        return (f"server counted only {prompt_tokens} prompt tokens for {chars} characters "
+                f"(~{chars // 4} expected): the input was probably truncated - check the model's "
+                f"context window (Ollama: OLLAMA_CONTEXT_LENGTH / num_ctx)")
+    return None
 
 
 def validate_estimate(d: dict) -> dict:
@@ -369,6 +427,12 @@ def format_dry_run(prep: PreparedInput) -> str:
            f"{len(prep.files) - len(prep.included)} listed only",
            f"  strategy: {prep.strategy}, LLM calls: {prep.planned_calls}",
            f"  input: {chars} characters (~{chars // 4} tokens, rough estimate at 4 chars/token)"]
+    facts = [f.facts for f in prep.files if f.facts]
+    raw = sum(f.raw_added + f.raw_deleted for f in facts)
+    shown = sum(f.added + f.deleted for f in prep.included if f.facts)
+    noise = {k: sum(getattr(f, k) for f in facts) for k in ("moved", "whitespace", "comments", "imports")}
+    out.append(f"  changed lines: {raw} raw, {shown} shown; removed as noise: "
+               + ", ".join(f"{v} {k}" for k, v in noise.items()))
     out += [f"  note: {n}" for n in prep.notes]
     out.append("")
     out.append("  Files not sent:")
@@ -392,4 +456,5 @@ def format_estimate(row: dict | None, hours_per_day: float) -> str:
         "    factors: " + ("; ".join(cf) or "-"),
         f"    rationale: {row['rationale']}",
         f"    tokens: {row['prompt_tokens']} in / {row['completion_tokens']} out, {row['calls']} call(s)",
+        *([f"    WARNING: {n}" for n in (row.get("notes") or "").splitlines() if "truncated" in n]),
     ])

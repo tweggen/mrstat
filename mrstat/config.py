@@ -109,6 +109,16 @@ class LLMConfig:
     max_input_chars: int = 400_000  # ~100k tokens; above this `large_mr_strategy` applies
     large_mr_strategy: str = "summarize"  # summarize | truncate | skip
     chunk_chars: int = 150_000  # chunk size for "summarize"
+    # deterministic diff cleanup before sending (see mrstat/diffprep.py)
+    clean_diff: bool = True
+    detect_moves: bool = True
+    min_move_block: int = 3  # substantial lines (>= 8 non-blank chars) for a block to count as moved
+    strip_whitespace_changes: bool = True
+    strip_comments: bool = True
+    strip_imports: bool = True
+    context_lines: int = 1
+    # long-prompt test in `mrstat test`: auto (only for Ollama URLs) | always | never
+    context_check: str = "auto"
 
 
 @dataclass

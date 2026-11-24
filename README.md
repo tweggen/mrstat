@@ -66,6 +66,20 @@ with a breakdown and rationale).
   therefore the effort the result doesn't show (searching, rework, reviews, coordination).
 * **Filtered input:** lock files, vendored and generated code, binaries and deleted files
   are listed with their line counts but their content is not sent (`llm.exclude`).
+* **Cleaned diff:** before sending, the diff is cleaned deterministically, so the same kind
+  of change always looks the same to the model:
+  * whitespace-only changes and added/removed blank lines are dropped,
+  * moved code (blocks of at least 3 substantial lines removed in one place and added
+    elsewhere, also re-indented) becomes one line `~ [N lines moved to/from ...]`,
+  * comment-only and import/include lines are dropped,
+  * context is reduced to 1 line, and `@@ name` lines say which function a change is in.
+
+  Nothing disappears from view: a **facts table** lists, per file, the category (code,
+  test, config, docs), language, raw size, what is still shown, and what was removed as
+  noise. Each setting can be switched off in `[llm]`.
+* **Truncation warning:** if the server reports far fewer prompt tokens than the prompt
+  should have, the estimate is flagged as "input probably truncated" (typical for a local
+  model whose context window is smaller than the prompt).
 * **Large MRs:** above `max_input_chars` the diff is summarized per file group first and
   the estimate is made from the summaries (`large_mr_strategy`). Nothing is cut silently;
   the stored estimate records the strategy used.
@@ -200,7 +214,7 @@ What is checked:
 |---|---|
 | GitLab | server reachable (`/version`), authentication (`/user`), token scopes and expiry, each configured project (and that its MRs are readable), each group |
 | Jira | server reachable (`/serverInfo`), authentication (`/myself`), visible projects vs. `project_keys`, whether `epic_link_field` / `story_points_field` exist (and suggests candidates), whether your `child_relations` / `parent_relations` phrases exist as link types (and lists the available ones) |
-| LLM | `/models` (optional, many gateways don't offer it), plus one tiny test completion with the configured `response_format` |
+| LLM | `/models` (optional, many gateways don't offer it), one tiny test completion with the configured `response_format`, and (automatic for Ollama, else `--context-check`) a long prompt that detects silent truncation |
 
 Recognised error types include: host name not resolvable (DNS, not on VPN), connection
 refused, timeout, untrusted TLS certificate (internal CA), proxy errors, an HTML/SSO login
@@ -211,7 +225,8 @@ Options:
 
 ```powershell
 mrstat test --only jira          # gitlab, jira, llm (comma separated)
-mrstat test --no-llm-call        # don't send the test completion
+mrstat test --no-llm-call        # don't send any test completion
+mrstat test --context-check      # also send a long prompt to detect truncation (auto for Ollama)
 mrstat test --timeout 60         # seconds per request (default 20)
 mrstat test --json               # machine-readable output
 ```
@@ -242,6 +257,34 @@ Common variants:
 | Server rejects `response_format` | `response_format = "json_object"` or `"none"` |
 
 `mrstat test --only llm` checks the endpoint with one tiny completion.
+
+#### Local models with Ollama (e.g. gemma3:12b)
+
+```toml
+[llm]
+base_url = "http://localhost:11434/v1"
+model = "gemma3:12b"
+response_format = "json_schema"   # Ollama supports structured output
+max_input_chars = 40000           # fits a 16k-token context with room for the answer
+chunk_chars = 30000
+```
+
+**Context window:** Ollama runs models with a small context window by default and cuts
+longer prompts *silently*. The OpenAI-compatible endpoint can't change this per request,
+so set it on the Ollama side, either for the server:
+
+```powershell
+$env:OLLAMA_CONTEXT_LENGTH = "16384"; ollama serve
+```
+
+or as a model variant (`Modelfile` with `FROM gemma3:12b` and `PARAMETER num_ctx 16384`,
+then `ollama create gemma3-16k -f Modelfile` and `model = "gemma3-16k"`).
+
+`mrstat test` detects Ollama URLs and then also sends one long prompt of
+`max_input_chars` characters with a code word at the start and at the end. If the start
+is lost, the check fails with the hint above. For other endpoints, run it with
+`mrstat test --context-check`. A larger context needs more GPU memory. If that's not
+available, lower `max_input_chars` and `chunk_chars` instead.
 
 ## Analyze single MRs and issues
 

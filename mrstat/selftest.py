@@ -173,9 +173,9 @@ class _Runner:
         self.r = result
         self.auth_hint = auth_hint
 
-    def step(self, title: str, fn: Callable[[], str | tuple[str, str] | None], *,
+    def step(self, title: str, fn: Callable[[], str | tuple | None], *,
              fatal: bool = True, warn_only: bool = False) -> bool:
-        """fn returns a detail string, or (status, detail) to override the status."""
+        """fn returns a detail string, or (status, detail[, hint]) to override the status."""
         try:
             out = fn()
         except Abort:
@@ -186,9 +186,11 @@ class _Runner:
             if fatal and not warn_only:
                 raise Abort() from exc
             return False
-        status, detail = ("ok", out) if not isinstance(out, tuple) else out
-        self.r.steps.append(Step(status, title, detail or ""))
-        return True
+        if not isinstance(out, tuple):
+            out = ("ok", out)
+        status, detail, hint = (*out, "")[:3]
+        self.r.steps.append(Step(status, title, detail or "", hint=hint))
+        return status != "fail"
 
     def add(self, status: str, title: str, detail: str = "", hint: str = "") -> None:
         self.r.steps.append(Step(status, title, detail, hint=hint))
@@ -357,7 +359,68 @@ PING_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["ok
                "properties": {"ok": {"type": "boolean"}}}
 
 
-def test_llm(cfg: Config, timeout: float, call: bool = True) -> ServiceResult:
+CONTEXT_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["first", "last"],
+                  "properties": {"first": {"type": "string"}, "last": {"type": "string"}}}
+_WORD_FIRST, _WORD_LAST = "PELICAN-4821", "MARIGOLD-7395"
+CONTEXT_HINT = ("The model only saw part of the prompt. Ollama: start the server with "
+                "OLLAMA_CONTEXT_LENGTH=16384 (or larger), or create a model variant with "
+                "'PARAMETER num_ctx 16384' in a Modelfile. Otherwise lower llm.max_input_chars and "
+                "llm.chunk_chars so prompts fit the model's context window "
+                "(roughly 3 characters per token for code).")
+
+
+def is_ollama(url: str) -> bool:
+    return ":11434" in url or "ollama" in url.lower()
+
+
+def _filler(chars: int) -> str:
+    """Deterministic code-like filler with realistic tokenisation."""
+    import random
+
+    rnd = random.Random(7)
+    words = ["value", "result", "count", "index", "buffer", "config", "handler", "item", "total",
+             "offset", "status", "record", "cache", "limit", "token", "entry", "node", "queue"]
+    lines, size = [], 0
+    while size < chars:
+        a, b, c = rnd.choice(words), rnd.choice(words), rnd.choice(words)
+        line = f"{a}_{rnd.randint(1, 999)} = compute_{b}({c}_{rnd.randint(1, 99)}, {rnd.randint(0, 9999)})"
+        lines.append(line)
+        size += len(line) + 1
+    return "\n".join(lines)
+
+
+def context_check(client, chars: int) -> tuple:
+    from mrstat.estimate import truncation_note
+    from mrstat.llm_client import parse_json_object
+
+    msgs = [{"role": "system", "content": "You are a connectivity check. Answer with JSON only."},
+            {"role": "user", "content":
+                f"The first code word is {_WORD_FIRST}.\n\nFiller text follows; ignore it.\n"
+                f"{_filler(chars)}\n\nThe last code word is {_WORD_LAST}.\n\n"
+                'Reply with JSON: {"first": "<first code word>", "last": "<last code word>"}'}]
+    sent = sum(len(m["content"]) for m in msgs)
+    t0 = time.monotonic()
+    res = client.chat(msgs, json_schema=CONTEXT_SCHEMA, schema_name="context_check")
+    dt = time.monotonic() - t0
+    try:
+        data = parse_json_object(res.text)
+    except LLMError:
+        data = {}
+    first_ok = _WORD_FIRST.lower() in str(data.get("first", "")).lower()
+    last_ok = _WORD_LAST.lower() in str(data.get("last", "")).lower()
+    detail = (f"{sent} characters sent (= llm.max_input_chars), server counted "
+              f"{res.prompt_tokens or '?'} prompt tokens, {dt:.0f}s")
+    note = truncation_note(msgs, res.prompt_tokens)
+    if note or (last_ok and not first_ok):
+        return ("fail", detail + "; the start of the prompt was lost (truncated)", CONTEXT_HINT)
+    if first_ok and last_ok:
+        return ("ok", detail + "; both ends of the prompt arrived")
+    return ("warn", detail + f"; model did not repeat the code words ({res.text[:80]!r}) - "
+                             "inconclusive, small models sometimes fail this", "")
+
+
+def test_llm(cfg: Config, timeout: float, call: bool = True,
+             check_context: bool | None = None) -> ServiceResult:
     from mrstat.llm_client import LLMClient, parse_json_object
 
     lc = cfg.llm
@@ -404,10 +467,22 @@ def test_llm(cfg: Config, timeout: float, call: bool = True) -> ServiceResult:
             return detail
 
         run.step("server reachable (/models)", models, fatal=False, warn_only=True)
-        if call:
-            run.step("test completion (a few tokens)", chat)
-        else:
+        if not call:
             run.add("skip", "test completion", "skipped (--no-llm-call)")
+            return res
+        run.step("test completion (a few tokens)", chat)
+
+        if check_context is None:
+            check_context = lc.context_check == "always" or (
+                lc.context_check == "auto" and is_ollama(lc.base_url))
+        if check_context:
+            long_client = LLMClient(lc)  # full llm.timeout: long prompts take a while locally
+            without_retries(long_client.s)
+            chars = min(lc.max_input_chars, 200_000)
+            run.step(f"long prompt ({chars} characters)", lambda: context_check(long_client, chars),
+                     fatal=False)
+        else:
+            run.add("skip", "long prompt", "not run (use --context-check; automatic for Ollama URLs)")
     except Abort:
         pass
     except ConfigError as exc:
@@ -416,14 +491,15 @@ def test_llm(cfg: Config, timeout: float, call: bool = True) -> ServiceResult:
 
 
 # ----------------------------------------------------------------------- entry
-def run_all(cfg: Config, only=SERVICES, timeout: float = 20.0, llm_call: bool = True) -> list[ServiceResult]:
+def run_all(cfg: Config, only=SERVICES, timeout: float = 20.0, llm_call: bool = True,
+            check_context: bool | None = None) -> list[ServiceResult]:
     out = []
     if "gitlab" in only:
         out.append(test_gitlab(cfg, timeout))
     if "jira" in only:
         out.append(test_jira(cfg, timeout))
     if "llm" in only:
-        out.append(test_llm(cfg, timeout, llm_call))
+        out.append(test_llm(cfg, timeout, llm_call, check_context))
     return out
 
 

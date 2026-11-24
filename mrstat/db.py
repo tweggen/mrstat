@@ -78,7 +78,7 @@ CREATE INDEX IF NOT EXISTS llm_estimates_mr ON llm_estimates(project_id, iid, cr
 """
 
 # columns added after the first release: (table, column, type)
-MIGRATIONS = [("issues", "description", "TEXT")]
+MIGRATIONS = [("issues", "description", "TEXT"), ("llm_estimates", "notes", "TEXT")]
 
 
 @dataclass(frozen=True)

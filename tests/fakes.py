@@ -113,13 +113,17 @@ class FakeJira:
 class FakeLLM:
     """Stands in for LLMClient: records calls, returns canned answers in order."""
 
-    def __init__(self, answers, model="fake-model"):
+    def __init__(self, answers, model="fake-model", context_tokens=None):
         self.answers = list(answers)
         self.calls = []
         self.model = model
+        self.context_tokens = context_tokens  # simulate a server that cuts long prompts
 
     def chat(self, messages, *, json_schema=None, schema_name="result"):
         from mrstat.llm_client import ChatResult
 
         self.calls.append({"messages": messages, "schema": json_schema})
-        return ChatResult(self.answers.pop(0), 100, 20)
+        tokens = sum(len(m["content"]) for m in messages) // 4
+        if self.context_tokens:
+            tokens = min(tokens, self.context_tokens)
+        return ChatResult(self.answers.pop(0), tokens, 20)

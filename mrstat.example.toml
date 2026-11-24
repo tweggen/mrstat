@@ -64,6 +64,17 @@ ticket_description_chars = 4000
 max_input_chars = 400000                 # ~100k tokens
 large_mr_strategy = "summarize"          # summarize | truncate | skip
 chunk_chars = 150000
+# For a local model like gemma3:12b via Ollama (base_url = "http://localhost:11434/v1"):
+# max_input_chars = 40000, chunk_chars = 30000, and raise Ollama's context (see README).
+# Deterministic diff cleanup before sending:
+clean_diff = true
+detect_moves = true
+min_move_block = 3
+strip_whitespace_changes = true
+strip_comments = true
+strip_imports = true
+context_lines = 1
+context_check = "auto"                   # long-prompt test in `mrstat test`: auto (Ollama) | always | never
 
 # Map all identities of a person to one name (git emails/names, Jira user names/emails).
 # Without an entry, the lowercased git email / Jira email is used, which already matches

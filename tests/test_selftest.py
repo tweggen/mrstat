@@ -42,10 +42,12 @@ def server():
 
     class Handler(BaseHTTPRequestHandler):
         def _serve(self, method):
+            req = None
             if method == "POST":
-                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                req = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"null")
             path = self.path.split("?")[0]
-            status, ctype, body = routes.get((method, path), (404, JSON, {"message": "404 Not Found"}))
+            route = routes.get((method, path), (404, JSON, {"message": "404 Not Found"}))
+            status, ctype, body = route(req) if callable(route) else route
             data = body.encode() if isinstance(body, str) else json.dumps(body).encode()
             self.send_response(status)
             self.send_header("Content-Type", ctype)
@@ -144,3 +146,39 @@ def test_not_configured_and_classify():
         "Failed to resolve 'gitlab.corp' ([Errno -2] Name or service not known)"))[0].startswith("host name")
     assert "certificate" in classify(requests.exceptions.SSLError(
         "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in chain"))[0]
+
+
+def fake_ollama(num_ctx_tokens):
+    """Chat endpoint that, like Ollama with a small num_ctx, keeps only the last tokens."""
+    def handler(req):
+        text = "\n".join(m["content"] for m in req["messages"])
+        tokens = len(text) // 4
+        visible = text[-num_ctx_tokens * 4:] if tokens > num_ctx_tokens else text
+        if req["response_format"]["json_schema"]["name"] == "ping":
+            answer = {"ok": True}
+        else:
+            answer = {"first": "PELICAN-4821" if "PELICAN-4821" in visible else "unknown",
+                      "last": "MARIGOLD-7395" if "MARIGOLD-7395" in visible else "unknown"}
+        return (200, JSON, {"choices": [{"message": {"content": json.dumps(answer)}, "finish_reason": "stop"}],
+                            "usage": {"prompt_tokens": min(tokens, num_ctx_tokens), "completion_tokens": 9}})
+    return handler
+
+
+@pytest.mark.parametrize("num_ctx, status", [(2048, "fail"), (1_000_000, "ok")])
+def test_context_check_detects_truncation(server, num_ctx, status):
+    base, routes = server
+    routes[("POST", "/v1/chat/completions")] = fake_ollama(num_ctx)
+    cfg = make_cfg(base)
+    cfg.llm.max_input_chars = 40_000
+    llm = run_all(cfg, only=["llm"], timeout=5, check_context=True)[0]
+    step = by_title(llm)["long prompt (40000 characters)"]
+    assert step.status == status, step
+    if status == "fail":
+        assert "truncated" in step.detail and "OLLAMA_CONTEXT_LENGTH" in step.hint
+        assert llm.status == "FAILED"
+
+
+def test_context_check_auto_only_for_ollama(server):
+    base, _ = server
+    llm = run_all(make_cfg(base), only=["llm"], timeout=5)[0]
+    assert by_title(llm)["long prompt"].status == "skip"
