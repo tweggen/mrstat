@@ -299,6 +299,108 @@ mrstat estimate group/project!1234 --dry-run --dump-prompt prompt.txt   # sends 
 mrstat estimate group/project!1234
 ```
 
+## Testing on Windows 11 with Git Bash
+
+All commands above work in Git Bash too, with a few differences from PowerShell.
+
+### Setup
+
+```bash
+git clone https://github.com/tweggen/mrstat.git
+cd mrstat
+py -m venv .venv                  # or: python -m venv .venv
+source .venv/Scripts/activate     # Windows venvs use Scripts/, not bin/
+pip install -e '.[web]'           # quote the brackets
+cp mrstat.example.toml mrstat.toml
+```
+
+Activate the venv again in every new Git Bash window (`source .venv/Scripts/activate`).
+Update later with `git pull && pip install -e '.[web]'`.
+
+### Environment variables
+
+Put tokens and settings in a `.env` file in the repo folder (it is in `.gitignore`):
+
+```bash
+# .env
+MRSTAT_GITLAB_TOKEN=glpat-xxxxxxxx
+MRSTAT_JIRA_TOKEN=xxxxxxxx
+MRSTAT_LLM_API_KEY=xxxxxxxx
+PYTHONUTF8=1             # UTF-8 output, so ticket titles with umlauts etc. print correctly
+PYTHONUNBUFFERED=1       # show output immediately in the Git Bash window
+# HTTPS_PROXY=http://proxy.yourcorp.internal:8080
+# NO_PROXY=yourcorp.internal
+```
+
+and load it into the current window:
+
+```bash
+set -a; source .env; set +a
+```
+
+### Paths in mrstat.toml
+
+mrstat is a normal Windows Python program, so paths in the config file use Windows form
+with forward slashes, not Git Bash form:
+
+```toml
+verify_ssl = "C:/certs/corp-root-ca.pem"    # not /c/certs/...
+db_path = "C:/Users/you/mrstat/mrstat.sqlite"
+```
+
+### Quote MR references
+
+In Git Bash, `!` triggers history expansion, so `group/project!1234` must be in **single
+quotes**. URLs need no quotes.
+
+```bash
+mrstat test
+mrstat -v mr 'group/project!1234' --tree
+mrstat mr https://gitlab.yourcorp.internal/group/project/-/merge_requests/1234
+mrstat estimate 'group/project!1234' --dry-run --dump-prompt prompt.txt
+```
+
+### Sending results back
+
+```bash
+mrstat test 2>&1 | tee test.txt        # show and save
+clip < test.txt                        # copy to the Windows clipboard, then paste
+```
+
+The `test` output and the dry run contain no tokens. `prompt.txt` contains code from the
+MR, so share it only if that's allowed.
+
+### Web UI
+
+```bash
+mrstat serve --port 8080               # then open http://127.0.0.1:8080
+```
+
+If Ctrl+C doesn't stop it in the Git Bash window, run it as `winpty mrstat serve --port 8080`,
+or close the window.
+
+### Ollama on Windows
+
+The Ollama Windows app runs in the tray and ignores variables set in Git Bash. To raise its
+context window, set the variable for your user, then quit Ollama from the tray and start it
+again:
+
+```bash
+setx OLLAMA_CONTEXT_LENGTH 16384
+```
+
+Alternatively, quit the tray app and run the server in a Git Bash window:
+`OLLAMA_CONTEXT_LENGTH=16384 ollama serve`. Check with `mrstat test --only llm`.
+
+### Running the unit tests
+
+```bash
+pip install -e '.[web,dev]'
+pytest -q
+```
+
+They need no access to GitLab, Jira or an LLM.
+
 ## Statistics database
 
 ```bash

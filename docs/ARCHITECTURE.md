@@ -209,7 +209,8 @@ databases, so never rename or drop columns.
   optional simulated context limit).
 * `tests/test_selftest.py`: a local `ThreadingHTTPServer` stub mimicking GitLab, Jira and
   an LLM gateway (including a fake Ollama that truncates).
-* Real-world validation happens on the user's Windows notebook: `mrstat test`,
+* Real-world validation happens on the user's Windows notebook (PowerShell or Git Bash, see
+  README "Testing on Windows 11 with Git Bash"): `mrstat test`,
   `mrstat estimate … --dry-run --dump-prompt`. The user pastes the output back.
 
 ## 8. Roadmap
