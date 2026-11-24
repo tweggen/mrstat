@@ -166,26 +166,58 @@ store, and you don't need the file.
 `$env:HTTPS_PROXY`. If they're reached directly while a proxy is set for everything else,
 set `$env:NO_PROXY = "yourcorp.internal"`.
 
-### 4. Test the connection
+### 4. Test the configuration
 
 ```powershell
-mrstat check
+mrstat test
 ```
 
-When it works, you should see something like:
+`mrstat test` (alias `mrstat check`) checks each service step by step and shows, for every
+failure, what kind of error it is and what to do about it:
 
 ```
-GitLab OK: https://gitlab.yourcorp.internal version 17.x
-  project group/subgroup/project: id 1234
-Jira OK: https://jira.yourcorp.internal version 9.x as your.login
-  project keys used for matching (...): ABC, DEF, ...
+GitLab  https://gitlab.yourcorp.internal
+  [ OK ] server reachable: GitLab 17.3.1
+  [ OK ] authentication: as your.login (Your Name)
+  [ OK ] token: scopes: read_api, expires 2027-03-01 (97 days)
+  [ OK ] project group/subgroup/project: id 1234, merge requests readable (some)
+
+Jira  https://jira.yourcorp.internal
+  [ OK ] server reachable: Jira 9.12.0 (Server)
+  [FAIL] authentication: authentication failed (HTTP 401)
+         -> Token or password wrong/expired: create a personal access token ...
+
+LLM  https://llm-gateway.yourcorp.internal/v1
+  [WARN] server reachable (/models): model my-model not in the list (may still work); available: ...
+  [ OK ] test completion (a few tokens): model my-model answered in 1.2s (31 in / 5 out tokens)
+
+Summary: GitLab OK, Jira FAILED, LLM OK with warnings
 ```
 
-- **401:** the token is wrong or expired.
-- **403:** the token lacks the scope or permissions.
-- **SSL error:** see section 3.
+What is checked:
 
-The `check` output contains server versions and project keys, but no tokens.
+| Service | Steps |
+|---|---|
+| GitLab | server reachable (`/version`), authentication (`/user`), token scopes and expiry, each configured project (and that its MRs are readable), each group |
+| Jira | server reachable (`/serverInfo`), authentication (`/myself`), visible projects vs. `project_keys`, whether `epic_link_field` / `story_points_field` exist (and suggests candidates), whether your `child_relations` / `parent_relations` phrases exist as link types (and lists the available ones) |
+| LLM | `/models` (optional, many gateways don't offer it), plus one tiny test completion with the configured `response_format` |
+
+Recognised error types include: host name not resolvable (DNS, not on VPN), connection
+refused, timeout, untrusted TLS certificate (internal CA), proxy errors, an HTML/SSO login
+page instead of the API, and HTTP 401 / 403 / 404 / 407 / 429 / 5xx. Requests are not
+retried during the test, so you see the first error right away.
+
+Options:
+
+```powershell
+mrstat test --only jira          # gitlab, jira, llm (comma separated)
+mrstat test --no-llm-call        # don't send the test completion
+mrstat test --timeout 60         # seconds per request (default 20)
+mrstat test --json               # machine-readable output
+```
+
+The exit code is 1 if any service failed. The output contains no tokens, so you can paste
+it when asking for help.
 
 ### 5. LLM endpoint (optional)
 
@@ -209,7 +241,7 @@ Common variants:
 | Newer OpenAI reasoning models | `max_tokens_param = "max_completion_tokens"`, `temperature = "omit"` |
 | Server rejects `response_format` | `response_format = "json_object"` or `"none"` |
 
-`mrstat check` also tests the LLM endpoint (via `/models`, which not every gateway offers).
+`mrstat test --only llm` checks the endpoint with one tiny completion.
 
 ## Analyze single MRs and issues
 

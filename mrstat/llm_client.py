@@ -19,7 +19,10 @@ log = logging.getLogger(__name__)
 
 
 class LLMError(Exception):
-    pass
+    def __init__(self, message: str, status: int | None = None, body: str = ""):
+        super().__init__(message)
+        self.status = status
+        self.body = body
 
 
 @dataclass
@@ -68,7 +71,8 @@ class LLMClient:
             hint = ""
             if r.status_code == 400 and "response_format" in r.text:
                 hint = " (endpoint rejects response_format: set llm.response_format = \"json_object\" or \"none\")"
-            raise LLMError(f"LLM endpoint returned {r.status_code}{hint}: {r.text[:500]}")
+            raise LLMError(f"LLM endpoint returned {r.status_code}{hint}: {r.text[:500]}",
+                           status=r.status_code, body=r.text[:500])
         data = r.json()
         try:
             choice = data["choices"][0]

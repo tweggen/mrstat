@@ -21,3 +21,11 @@ def make_session(verify: bool | str, headers: dict[str, str], auth=None) -> requ
     s.mount("https://", adapter)
     s.mount("http://", adapter)
     return s
+
+
+def without_retries(s: requests.Session) -> requests.Session:
+    """For diagnostics: fail fast and show the first error instead of retrying."""
+    adapter = HTTPAdapter(max_retries=0)
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+    return s

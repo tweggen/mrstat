@@ -1,6 +1,6 @@
 """Command line interface.
 
-  mrstat check                              test connectivity / credentials
+  mrstat test                               test configuration and connections (alias: check)
   mrstat mr <ref> [iid]                     analyze one MR (ref: URL, group/proj!123, or project + iid)
   mrstat issue KEY                          Jira hierarchy of an issue vs. MRs in the DB
   mrstat sync --since 2026-01-01 [--until]  historical run over a time span
@@ -60,55 +60,22 @@ def build(cfg: Config, *, need_gitlab=True, need_jira=False, no_jira=False):
 
 
 # ------------------------------------------------------------------------- commands
-def cmd_check(cfg: Config, args) -> int:
-    ok = True
-    if cfg.gitlab.url:
-        from mrstat.gitlab_client import GitLabClient
-        try:
-            v = GitLabClient(cfg.gitlab).version()
-            print(f"GitLab OK: {cfg.gitlab.url} version {v.get('version')}")
-            for p in cfg.gitlab.projects:
-                print(f"  project {p}: id {GitLabClient(cfg.gitlab).project(p)['id']}")
-        except Exception as exc:  # noqa: BLE001
-            ok = False
-            print(f"GitLab FAILED: {exc}")
+def cmd_test(cfg: Config, args) -> int:
+    import json
+
+    from mrstat import selftest
+
+    only = [x.strip().lower() for x in args.only.split(",")] if args.only else selftest.SERVICES
+    unknown = set(only) - set(selftest.SERVICES)
+    if unknown:
+        raise ValueError(f"--only: unknown service(s) {', '.join(sorted(unknown))}; use gitlab,jira,llm")
+    results = selftest.run_all(cfg, only, timeout=args.timeout, llm_call=not args.no_llm_call)
+    if args.json:
+        print(json.dumps([{"service": r.name, "url": r.url, "status": r.status,
+                           "steps": [s.__dict__ for s in r.steps]} for r in results], indent=2))
     else:
-        print("GitLab not configured")
-    if cfg.jira.url:
-        from mrstat.jira_client import JiraClient
-        try:
-            j = JiraClient(cfg.jira)
-            info = j.server_info()
-            me = j.myself()
-            print(f"Jira OK: {cfg.jira.url} version {info.get('version')} as {me.get('name')}")
-            keys = cfg.jira.project_keys or j.project_keys()
-            print(f"  project keys used for matching ({len(keys)}): {', '.join(sorted(keys)[:30])}"
-                  + (" ..." if len(keys) > 30 else ""))
-        except Exception as exc:  # noqa: BLE001
-            ok = False
-            print(f"Jira FAILED: {exc}")
-    else:
-        print("Jira not configured")
-    if cfg.llm.base_url:
-        from mrstat.llm_client import LLMClient
-        try:
-            c = LLMClient(cfg.llm)
-            r = c.s.get(cfg.llm.base_url.rstrip("/") + "/models", params=cfg.llm.extra_query or None,
-                        timeout=30)
-            if r.status_code < 400:
-                ids = [m.get("id") for m in (r.json().get("data") or []) if isinstance(m, dict)]
-                found = "listed" if cfg.llm.model in ids else "not in /models list (may still work)"
-                print(f"LLM OK: {cfg.llm.base_url} model {cfg.llm.model} {found}")
-            else:
-                print(f"LLM endpoint reachable, /models returned {r.status_code} "
-                      f"(not all gateways offer it; try `mrstat estimate ... ` on a small MR)")
-        except Exception as exc:  # noqa: BLE001
-            ok = False
-            print(f"LLM FAILED: {exc}")
-    else:
-        print("LLM not configured")
-    print(f"Database: {cfg.db_path}")
-    return 0 if ok else 1
+        print(selftest.format_results(results, cfg))
+    return 1 if any(r.status == "FAILED" for r in results) else 0
 
 
 def cmd_mr(cfg: Config, args) -> int:
@@ -272,7 +239,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--version", action="version", version=__version__)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("check", help="test connectivity").set_defaults(func=cmd_check)
+    p = sub.add_parser("test", aliases=["check"],
+                       help="test the configuration: connections to GitLab, Jira and the LLM")
+    p.add_argument("--only", help="comma separated subset: gitlab,jira,llm")
+    p.add_argument("--timeout", type=float, default=20.0, help="seconds per request (default 20)")
+    p.add_argument("--no-llm-call", action="store_true", help="do not send the small test completion")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_test)
 
     p = sub.add_parser("mr", help="analyze a single merge request")
     p.add_argument("ref", help="MR URL, group/project!IID, or project path/id")
