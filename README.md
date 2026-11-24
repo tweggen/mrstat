@@ -343,3 +343,7 @@ The web UI has no authentication; put it behind your reverse proxy / SSO if need
 pip install -e .[web,dev]
 pytest
 ```
+
+Requirements, design decisions, architecture, data model and roadmap are in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Coding agents start from
+[CLAUDE.md](CLAUDE.md) or [AGENTS.md](AGENTS.md), which both point there.
