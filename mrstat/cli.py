@@ -152,34 +152,58 @@ def cmd_issue(cfg: Config, args) -> int:
     return 0
 
 
+def make_progress(mode: str):
+    """Console progress on stderr; log messages are routed around the status line."""
+    from mrstat.progress import ConsoleProgress, ProgressAwareStream
+
+    progress = ConsoleProgress(mode)
+    if progress.mode == "bar":
+        for h in logging.getLogger().handlers:
+            if isinstance(h, logging.StreamHandler):
+                h.setStream(ProgressAwareStream(progress))
+    return progress
+
+
 def cmd_sync(cfg: Config, args) -> int:
+    import time
+
     from mrstat.sync import run_sync
 
+    t0 = time.monotonic()
+    progress = make_progress(args.progress)
     an = build(cfg, no_jira=args.no_jira)
     res = run_sync(
         an,
         since=parse_date_arg(args.since) if args.since else None,
         until=parse_date_arg(args.until) if args.until else None,
         incremental=args.incremental,
+        progress=progress,
     )
-    print(f"synced {iso(res.since)} .. {iso(res.until)}: {len(res.analyzed)} MRs, {len(res.failed)} failed")
-    for pid, iid, err in res.failed:
-        print(f"  FAILED {pid}!{iid}: {err}")
     failed = bool(res.failed)
+    llm_done = None
     if args.llm:
         from mrstat.estimate import Estimator
         from mrstat.llm_client import LLMClient
         est = Estimator(cfg, an.db, an.gl, LLMClient(cfg.llm))
-        done = 0
+        llm_done = 0
+        progress.phase("LLM estimates", len(res.analyzed))
         for pid, iid in res.analyzed:
             try:
                 if est.estimate(pid, iid):
-                    done += 1
+                    llm_done += 1
             except Exception as exc:  # noqa: BLE001
                 failed = True
-                log.exception("LLM estimate failed for %s!%s", pid, iid)
-                print(f"  LLM FAILED {pid}!{iid}: {exc}")
-        print(f"LLM estimates: {done} of {len(res.analyzed)} MRs")
+                log.debug("LLM estimate failed for %s!%s", pid, iid, exc_info=True)
+                progress.note(f"LLM FAILED {pid}!{iid}: {exc}")
+            progress.advance(f"{pid}!{iid}")
+        progress.done()
+    elapsed = time.monotonic() - t0
+    print(f"synced {iso(res.since)} .. {iso(res.until)}: {len(res.analyzed)} MRs, "
+          f"{len(res.failed)} failed, {elapsed:.0f}s")
+    for pid, iid, err in res.failed:
+        print(f"  FAILED {pid}!{iid}: {err}")
+    if llm_done is not None:
+        print(f"LLM estimates: {llm_done} of {len(res.analyzed)} MRs")
     return 1 if failed else 0
 
 
@@ -187,7 +211,7 @@ def cmd_recompute(cfg: Config, args) -> int:
     from mrstat.sync import recompute_all
 
     an = build(cfg, need_gitlab=False, no_jira=True)
-    print(f"recomputed {recompute_all(an)} MRs")
+    print(f"recomputed {recompute_all(an, make_progress(args.progress))} MRs")
     return 0
 
 
@@ -283,9 +307,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--incremental", action="store_true")
     p.add_argument("--no-jira", action="store_true")
     p.add_argument("--llm", action="store_true", help="also LLM-estimate every synced MR")
+    p.add_argument("--progress", choices=["auto", "bar", "lines", "none"], default="auto",
+                   help="progress display on stderr (auto: bar in a terminal, lines otherwise)")
     p.set_defaults(func=cmd_sync)
 
-    sub.add_parser("recompute", help="recompute efforts from stored commits").set_defaults(func=cmd_recompute)
+    p = sub.add_parser("recompute", help="recompute efforts from stored commits")
+    p.add_argument("--progress", choices=["auto", "bar", "lines", "none"], default="auto")
+    p.set_defaults(func=cmd_recompute)
 
     p = sub.add_parser("report", help="statistics from the DB")
     p.add_argument("--since")

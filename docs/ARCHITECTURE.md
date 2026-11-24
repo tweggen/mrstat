@@ -162,7 +162,15 @@ GitLab version/user/token scopes/projects/groups; Jira serverInfo/myself/project
 fields/link phrases; LLM `/models`, a ping completion, and a long-prompt **context check**
 (code words at both ends; automatic for Ollama URLs).
 
-### 4.6 Presentation – `report.py`, `queries.py`, `web/`
+### 4.6 Progress – `progress.py`
+
+`Progress` interface (`phase`, `advance`, `note`, `done`) passed into `run_sync` /
+`recompute_all`: `ConsoleProgress` (`bar` = in-place line on stderr, auto-selected in a
+TTY or Git Bash via `MSYSTEM`; `lines` = one line per item), `StatusProgress` (writes into
+the web UI's sync status dict). In bar mode, log handlers write through
+`ProgressAwareStream`, so log lines don't garble the status line.
+
+### 4.7 Presentation – `report.py`, `queries.py`, `web/`
 
 Text/JSON output for the CLI; SQL for MR lists and per-person stats; FastAPI + Jinja2
 templates (MR list, MR detail, issue/cluster, persons) and `/api/*`. The web UI has no

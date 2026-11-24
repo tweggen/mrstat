@@ -417,6 +417,21 @@ mrstat recompute                                    # after changing [effort] or
 mrstat serve --port 8080                            # web UI on http://127.0.0.1:8080
 ```
 
+`sync` shows its progress on stderr, phase by phase, with counter, percentage, ETA and the
+MR currently being processed:
+
+```
+sync 2026-01-01T00:00:00Z .. 2026-07-01T00:00:00Z
+[find MRs] 412  38s
+[analyze] 137/412  33%  ETA 9m12s  product/backend/order-service!1234 Fix rounding in invoices
+```
+
+In a terminal (including Git Bash) the line updates in place; elsewhere (log files,
+`docker logs`) one line per MR is printed. Choose explicitly with
+`--progress bar|lines|none`. Failed MRs are reported as they happen and summarised at the
+end (`-vv` shows the full traceback). During periodic syncs in `serve`, the web UI header
+shows the same progress.
+
 ## Container
 
 ```bash

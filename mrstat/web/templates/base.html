@@ -43,7 +43,7 @@
   <nav><a href="/">Merge requests</a><a href="/persons">Persons</a></nav>
   <span class="meta">{{ totals.mrs }} MRs · {{ totals.commits }} commits · {{ totals.issues }} issues
     {% if totals.last_sync %}· last sync {{ totals.last_sync }}{% endif %}
-    {% if sync.running %}· <b>sync running</b>{% endif %}
+    {% if sync.running %}· <b>sync running</b>{% if sync.progress %} {{ sync.progress }}{% endif %}{% endif %}
     {% if sync.error %}· <span class="warn">sync error: {{ sync.error }}</span>{% endif %}</span>
 </header>
 <main>
