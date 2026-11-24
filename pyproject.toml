@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mrstat"
+version = "0.1.0"
+description = "Estimate effort behind GitLab merge requests and compare it with Jira ticket hierarchies"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+    "tzdata; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+web = ["fastapi>=0.110", "uvicorn>=0.27", "jinja2>=3.1"]
+dev = ["pytest>=8", "httpx>=0.27", "fastapi>=0.110", "jinja2>=3.1"]
+
+[project.scripts]
+mrstat = "mrstat.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["mrstat*"]
+
+[tool.setuptools.package-data]
+mrstat = ["web/templates/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

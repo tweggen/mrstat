@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Persons · mrstat{% endblock %}
+{% block content %}
+<h1>Persons</h1>
+<form class="inline" method="get">
+  <label>since <input type="date" name="since" value="{{ since }}"></label>
+  <label>until <input type="date" name="until" value="{{ until }}"></label>
+  <button type="submit">Filter</button>
+</form>
+<p class="muted">Commit hours: MRs merged in the window. Jira hours: worklogs started in the window (only issues fetched via referenced hierarchies).</p>
+{% set mx = (rows | map(attribute='hours') | list + rows | map(attribute='jira_hours') | list + [1]) | max %}
+<table>
+  <tr><th>Person</th><th class="n">MRs</th><th class="n">Commits</th><th class="n">Commit h</th><th class="n">Days</th><th class="n">Jira h</th><th></th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><a href="/?person={{ r.person|urlencode }}">{{ r.person }}</a></td>
+    <td class="n">{{ r.mrs }}</td><td class="n">{{ r.commits }}</td>
+    <td class="n">{{ '%.1f'|format(r.hours) }}</td><td class="n">{{ '%.1f'|format(r.hours / hpd) }}</td>
+    <td class="n">{{ '%.1f'|format(r.jira_hours) }}</td>
+    <td style="width:30%"><span class="bar" style="width:{{ 100 * r.hours / mx }}%"></span><br>
+        <span class="bar j" style="width:{{ 100 * r.jira_hours / mx }}%"></span></td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

@@ -1,0 +1,16 @@
+services:
+  mrstat:
+    build: .
+    restart: unless-stopped
+    ports: ["8080:8080"]
+    environment:
+      MRSTAT_GITLAB_TOKEN: ${MRSTAT_GITLAB_TOKEN}
+      MRSTAT_JIRA_TOKEN: ${MRSTAT_JIRA_TOKEN}
+      MRSTAT_INITIAL_SINCE: "2026-01-01"
+      MRSTAT_SYNC_EVERY: "21600"
+    volumes:
+      - ./mrstat.toml:/config/mrstat.toml:ro
+      - mrstat-data:/data
+
+volumes:
+  mrstat-data:

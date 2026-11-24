@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}{{ d.mr.project_path }}!{{ d.mr.iid }} · mrstat{% endblock %}
+{% block content %}
+{% set m = d.mr %}
+<h1>{{ m.project_path }}!{{ m.iid }} · {{ m.title }}</h1>
+<p class="muted"><a href="{{ m.web_url }}">open in GitLab ↗</a> · {{ m.state }} · {{ m.source_branch }} → {{ m.target_branch }}
+  · created {{ (m.created_at or '')[:10] }} · merged {{ (m.merged_at or '–')[:10] }} · analyzed {{ m.analyzed_at }}</p>
+
+<h2>Effort estimated from commits</h2>
+{% set total = d.effort | sum(attribute='hours') %}
+<table>
+  <tr><th>Person</th><th class="n">Commits</th><th class="n">Hours</th><th class="n">Person days</th></tr>
+  {% for e in d.effort %}
+  <tr><td>{{ e.person }}</td><td class="n">{{ e.commits }}</td><td class="n">{{ '%.1f'|format(e.hours) }}</td><td class="n">{{ '%.2f'|format(e.hours / hpd) }}</td></tr>
+  {% endfor %}
+  <tr class="total"><td>Total</td><td class="n">{{ d.commits|length }}</td><td class="n">{{ '%.1f'|format(total) }}</td><td class="n">{{ '%.2f'|format(total / hpd) }}</td></tr>
+</table>
+{% if m.gl_time_spent_s %}<p class="muted">GitLab time tracking on this MR: {{ '%.1f'|format(m.gl_time_spent_s / 3600) }} h</p>{% endif %}
+
+{% if cmp %}
+<p><a href="?expand={{ 'false' if expand else 'true' }}">{{ 'Only this MR' if expand else 'Include all MRs of the same ticket hierarchy' }}</a></p>
+{% include "_comparison.html" %}
+{% else %}
+<p class="muted">No Jira issues referenced in title, branch, description or commit messages.</p>
+{% endif %}
+
+<h2>Commits</h2>
+<table>
+  <tr><th>Authored</th><th>Author</th><th>SHA</th><th>Title</th></tr>
+  {% for c in d.commits %}
+  <tr><td class="muted">{{ c.authored_at }}</td><td>{{ c.author }}</td><td><code>{{ c.sha[:10] }}</code></td><td>{{ c.title }}</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

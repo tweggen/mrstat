@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}{{ key }} · mrstat{% endblock %}
+{% block content %}
+<h1>{{ key }}{% if cmp.issues %} · {{ cmp.issues[0].summary if cmp.issues[0].key == key else '' }}{% endif %}</h1>
+<p class="muted">Hierarchy below {{ key }} as stored in the database, compared with all known MRs referencing any issue in it.</p>
+{% include "_comparison.html" %}
+{% endblock %}

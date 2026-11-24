@@ -1,0 +1,6 @@
+.venv
+.git
+tests
+*.sqlite*
+mrstat.toml
+.env

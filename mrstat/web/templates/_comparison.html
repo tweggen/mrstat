@@ -1,0 +1,42 @@
+<h2>Commit effort vs. Jira hierarchy</h2>
+<div class="grid">
+  <div class="tile"><div class="v">{{ '%.1f'|format(cmp.mr_hours) }} h</div><div class="l">commit effort, {{ cmp.mrs|length }} MR(s) · {{ '%.1f'|format(cmp.mr_hours / hpd) }} d</div></div>
+  <div class="tile"><div class="v">{{ '%.1f'|format(cmp.jira_spent_h) }} h</div><div class="l">Jira time spent, {{ cmp.issues|length }} issue(s) · {{ '%.1f'|format(cmp.jira_spent_h / hpd) }} d</div></div>
+  <div class="tile"><div class="v">{{ '%.2f'|format(cmp.ratio) if cmp.ratio is not none else '–' }}</div><div class="l">commit / Jira ratio</div></div>
+  <div class="tile"><div class="v">{{ '%.1f'|format(cmp.jira_estimate_h) }} h</div><div class="l">Jira original estimate{% if cmp.story_points %} · {{ cmp.story_points }} SP{% endif %}</div></div>
+  {% if cmp.gl_time_spent_h %}<div class="tile"><div class="v">{{ '%.1f'|format(cmp.gl_time_spent_h) }} h</div><div class="l">GitLab /spend</div></div>{% endif %}
+</div>
+<p class="muted">Referenced: {{ cmp.referenced|join(', ') or '–' }} · roots: {{ cmp.roots|join(', ') or '–' }}
+{% if cmp.missing %}<br><span class="warn">Not found / not fetched: {{ cmp.missing|join(', ') }}</span>{% endif %}</p>
+
+<table>
+  <tr><th>Person</th><th class="n">Commit h</th><th class="n">Jira h</th></tr>
+  {% for p in cmp.persons %}
+  <tr><td>{{ p }}</td><td class="n">{{ '%.1f'|format(cmp.mr_by_person.get(p, 0)) }}</td><td class="n">{{ '%.1f'|format(cmp.jira_by_person.get(p, 0)) }}</td></tr>
+  {% endfor %}
+  <tr class="total"><td>Total</td><td class="n">{{ '%.1f'|format(cmp.mr_hours) }}</td><td class="n">{{ '%.1f'|format(cmp.jira_spent_h) }}</td></tr>
+</table>
+
+<h2>Merge requests in this cluster</h2>
+<table>
+  <tr><th>MR</th><th>Title</th><th>Merged</th><th class="n">Hours</th></tr>
+  {% for m in cmp.mrs %}
+  <tr><td><a href="/mr/{{ m.project_id }}/{{ m.iid }}">{{ m.project_path or m.project_id }}!{{ m.iid }}</a></td>
+      <td>{{ m.title }}</td><td class="muted">{{ (m.merged_at or '')[:10] }}</td><td class="n">{{ '%.1f'|format(m.hours) }}</td></tr>
+  {% endfor %}
+</table>
+{% if cmp.other_mrs %}<p class="muted">Also referencing this hierarchy (not included):
+  {% for p, i in cmp.other_mrs %}<a href="/mr/{{ p }}/{{ i }}">{{ p }}!{{ i }}</a> {% endfor %}</p>{% endif %}
+
+<h2>Jira issues</h2>
+<table>
+  <tr><th>Key</th><th>Type</th><th>Status</th><th>Summary</th><th class="n">Spent h</th><th class="n">Estimate h</th><th class="n">SP</th></tr>
+  {% for i in cmp.issues %}
+  <tr><td><a href="/issue/{{ i.key }}">{{ i.key }}</a> {% if i.root %}<span class="muted">root</span>{% elif i.referenced %}<span class="muted">ref</span>{% endif %}
+        {% if i.web_url %}<a href="{{ i.web_url }}" title="open in Jira">↗</a>{% endif %}</td>
+      <td>{{ i.issue_type or '' }}</td><td>{{ i.status or '' }}</td><td>{{ i.summary or '' }}</td>
+      <td class="n">{{ '%.1f'|format(i.spent_h) }}</td>
+      <td class="n">{{ '%.1f'|format((i.orig_estimate_s or 0) / 3600) }}</td>
+      <td class="n">{{ i.story_points if i.story_points is not none else '' }}</td></tr>
+  {% endfor %}
+</table>

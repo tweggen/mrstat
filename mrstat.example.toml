@@ -1,0 +1,49 @@
+# mrstat configuration. Copy to mrstat.toml (or point MRSTAT_CONFIG at it).
+# Secrets should come from environment variables instead of this file:
+#   MRSTAT_GITLAB_TOKEN, MRSTAT_JIRA_TOKEN (or MRSTAT_JIRA_USERNAME + MRSTAT_JIRA_PASSWORD)
+# URLs/DB can be overridden too: MRSTAT_GITLAB_URL, MRSTAT_JIRA_URL, MRSTAT_DB
+
+db_path = "mrstat.sqlite"
+# Where to look for Jira keys in an MR.
+key_sources = ["title", "description", "source_branch", "commits"]
+
+[gitlab]
+url = "https://gitlab.example.internal"
+# verify_ssl = "C:/certs/corp-ca.pem"   # path to the internal CA bundle, or false (not recommended)
+projects = ["product/backend", "product/frontend"]   # scope of `sync`
+groups = []                                          # whole groups (incl. subgroups) also work
+mr_state = "merged"
+# Only count MRs into these branches to avoid counting the same commits twice
+# (e.g. feature -> develop and later develop -> main). Empty = all.
+target_branches = ["main", "develop"]
+
+[jira]
+url = "https://jira.example.internal"
+# project_keys = ["APP", "CORE"]     # default: all project keys known to Jira
+story_points_field = ""              # e.g. "customfield_10002"
+epic_link_field = "customfield_10008"
+epic_children_jql = '"Epic Link" = {key}'
+# Link phrases as shown in Jira, seen from the parent / from the child:
+child_relations = ["requires", "contains", "is parent of"]
+parent_relations = ["is required by", "is contained in", "is child of"]
+ascend_levels = 0     # 1 = also include the parents of the referenced tickets (and their subtree)
+max_depth = 6
+include_subtasks = true
+fetch_worklogs = true
+cache_hours = 12
+
+[effort]
+max_gap_minutes = 120
+first_commit_minutes = 60
+max_hours_per_day = 10
+hours_per_day = 8
+timezone = "Europe/Berlin"
+ignore_merge_commits = true
+ignore_authors = ["bot", "renovate", "noreply"]
+fetch_context = true
+
+# Map all identities of a person to one name (git emails/names, Jira user names/emails).
+# Without an entry, the lowercased git email / Jira email is used, which already matches
+# when both systems use the corporate address.
+[identities]
+# "jdoe" = ["john.doe@example.com", "John Doe", "jdoe", "J.Doe@old-domain.com"]

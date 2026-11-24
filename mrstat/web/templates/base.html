@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}mrstat{% endblock %}</title>
+<style>
+  :root { --bg:#fbfbfa; --fg:#1d1d1b; --muted:#6b6b66; --line:#e3e2de; --accent:#2f5d8a; --warn:#a0522d; --card:#fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#191918; --fg:#e8e6e1; --muted:#9a988f; --line:#33322f; --accent:#7fa8d1; --warn:#d99a6c; --card:#211f1e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display:flex; gap:24px; align-items:baseline; padding:12px 24px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header b { font-size:16px; }
+  header nav a { margin-right:16px; }
+  header .meta { margin-left:auto; color:var(--muted); font-size:12px; }
+  main { padding:16px 24px 48px; max-width:1400px; }
+  a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  table { border-collapse:collapse; width:100%; margin:8px 0 20px; background:var(--card); }
+  th, td { padding:5px 8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+  th { font-weight:600; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.03em; }
+  td.n, th.n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  tr.total td { font-weight:600; border-top:2px solid var(--line); }
+  form.inline { display:flex; gap:8px; flex-wrap:wrap; align-items:end; margin:8px 0 16px; }
+  form.inline label { display:flex; flex-direction:column; font-size:12px; color:var(--muted); }
+  input, select, button { font:inherit; padding:4px 8px; border:1px solid var(--line); border-radius:4px; background:var(--card); color:var(--fg); }
+  button { cursor:pointer; background:var(--accent); color:#fff; border:none; }
+  .muted { color:var(--muted); } .warn { color:var(--warn); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin:12px 0 20px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:10px 12px; }
+  .tile .v { font-size:22px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .tile .l { font-size:12px; color:var(--muted); }
+  .bar { height:8px; background:var(--accent); border-radius:2px; display:inline-block; vertical-align:middle; }
+  .bar.j { background:var(--warn); }
+  code { font-size:12px; }
+  h1 { font-size:20px; margin:8px 0; } h2 { font-size:16px; margin:20px 0 4px; }
+</style>
+</head>
+<body>
+<header>
+  <b>mrstat</b>
+  <nav><a href="/">Merge requests</a><a href="/persons">Persons</a></nav>
+  <span class="meta">{{ totals.mrs }} MRs · {{ totals.commits }} commits · {{ totals.issues }} issues
+    {% if totals.last_sync %}· last sync {{ totals.last_sync }}{% endif %}
+    {% if sync.running %}· <b>sync running</b>{% endif %}
+    {% if sync.error %}· <span class="warn">sync error: {{ sync.error }}</span>{% endif %}</span>
+</header>
+<main>
+{% if can_analyze %}
+<form class="inline" method="post" action="/analyze">
+  <label>Analyze now
+    <input name="ref" size="60" placeholder="MR URL, group/project!123, or Jira key"></label>
+  <label>as <select name="kind"><option value="mr">merge request</option><option value="issue">Jira issue</option></select></label>
+  <button type="submit">Analyze</button>
+</form>
+{% endif %}
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>
