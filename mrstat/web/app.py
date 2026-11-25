@@ -153,15 +153,10 @@ def _sync_loop(factory, every: int, initial_since: str | None, status: dict,
                 from mrstat.estimate import Estimator
                 from mrstat.llm_client import LLMClient
                 est = Estimator(an.cfg, an.db, an.gl, LLMClient(an.cfg.llm))
-                prog = StatusProgress(status)
-                prog.phase("LLM estimates", len(res.analyzed))
-                for pid, iid in res.analyzed:
-                    try:
-                        est.estimate(pid, iid)
-                    except Exception:  # noqa: BLE001
-                        log.exception("LLM estimate failed for %s!%s", pid, iid)
-                    prog.advance(f"{pid}!{iid}")
-                prog.done()
+                run = est.run(list(res.analyzed) + est.missing(), StatusProgress(status))
+                status.update(llm=run.summary())
+                for pid, iid, err in run.failed:
+                    log.warning("LLM estimate failed for %s!%s: %s", pid, iid, err)
         except Exception as exc:  # noqa: BLE001
             log.exception("periodic sync failed")
             status.update(error=str(exc))

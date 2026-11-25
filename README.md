@@ -84,7 +84,10 @@ with a breakdown and rationale).
   the estimate is made from the summaries (`large_mr_strategy`). Nothing is cut silently;
   the stored estimate records the strategy used.
 * **Cached:** each estimate is stored with a hash of its input, model and prompt version,
-  and only recomputed when one of them changes (or with `--force`).
+  and only recomputed when one of them changes (or with `--force`). Re-runs therefore
+  only call the LLM for MRs that are new, whose diff or ticket text changed, or after a
+  model or prompt change. The run summary shows the split, e.g.
+  `LLM estimates: 12 new, 388 unchanged, 0 skipped (too large), 0 failed`.
 
 Any OpenAI-compatible `/chat/completions` endpoint works (internal gateway, Azure OpenAI,
 vLLM, Ollama, LiteLLM, ...). Source code is sent to that endpoint, so use one your company
@@ -302,7 +305,14 @@ mrstat issue ABC-4711
 # LLM estimate
 mrstat estimate group/project!1234 --dry-run --dump-prompt prompt.txt   # sends nothing
 mrstat estimate group/project!1234
+mrstat estimate --missing                     # every MR in the DB without an estimate yet
+mrstat estimate --missing --since 2026-01-01 --limit 20   # try it on the 20 newest first
 ```
+
+`--missing` takes the MRs from the database (no GitLab re-sync, only their diffs are
+fetched) and estimates those that have no estimate from the current model and prompt
+version. Run it after a plain `sync`, after switching models, or after an update that
+bumped the prompt version.
 
 ## Testing on Windows 11 with Git Bash
 
@@ -411,7 +421,7 @@ They need no access to GitLab, Jira or an LLM.
 ```bash
 mrstat sync --since 2026-01-01 --until 2026-07-01   # historical (MRs merged in the span)
 mrstat sync --incremental                           # from the last successful sync
-mrstat sync --incremental --llm                     # ... and LLM-estimate the synced MRs
+mrstat sync --incremental --llm                     # ... and LLM-estimate (see below)
 mrstat report --by person --since 2026-01-01 --csv persons.csv
 mrstat recompute                                    # after changing [effort] or [identities]
 mrstat serve --port 8080                            # web UI on http://127.0.0.1:8080
@@ -445,6 +455,12 @@ The container serves the UI on port 8080 and runs an incremental sync every
 estimates during the sync, add `--llm` to the `serve` command. Data lives in the
 `/data` volume. JSON API: `/api/mrs`, `/api/persons`, `/api/mr/{project_id}/{iid}`,
 `/api/issue/{KEY}`, `/api/sync`.
+
+With `--llm` (`sync` or `serve`), the LLM phase covers the MRs of this run **plus** every
+MR in the database that still has no estimate from the current model and prompt version
+(for `sync`, limited to `--since`/`--until` if given). So MRs synced earlier without
+`--llm` are caught up, and an incremental run doesn't miss them. MRs skipped as too large
+are re-checked on each run (a GitLab request, no LLM call).
 
 The merge request list shows the 10,000 most recent MRs matching the filter (field "max
 rows", or `?limit=` on the page and on `/api/mrs`). If more match, a note says so and the

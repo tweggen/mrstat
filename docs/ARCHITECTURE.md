@@ -147,7 +147,11 @@ advances only if no MR failed.
    invalid answer. Truncation is flagged if the server counts far fewer prompt tokens than
    chars/7.
 6. **Store:** `llm_estimates` keyed by MR, model, `PROMPT_VERSION`, input hash. The same
-   input isn't re-estimated unless `--force`. **Bump `PROMPT_VERSION` whenever prompt
+   input isn't re-estimated unless `--force`. `Estimator.run()` processes a batch and
+   counts new / unchanged / skipped / failed; `Estimator.missing()` lists MRs without an
+   estimate for the current model and `PROMPT_VERSION` (DB only). `sync --llm`,
+   `serve --llm` and `estimate --missing` estimate the run's MRs plus the missing ones,
+   so incremental runs catch up on MRs synced without `--llm`. **Bump `PROMPT_VERSION` whenever prompt
    text or preprocessing changes what is sent.**
 
 `llm_client.py` is plain `requests` against `{base_url}/chat/completions` with configurable

@@ -273,9 +273,57 @@ def _chunk(files: list[FileEntry], size: int) -> tuple[list[str], list[str]]:
     return chunks, notes
 
 
+@dataclass
+class EstimateRun:
+    """Outcome of estimating a batch of MRs."""
+    new: int = 0        # LLM was called
+    cached: int = 0     # unchanged input, existing estimate kept
+    skipped: int = 0    # too large with large_mr_strategy = "skip"
+    failed: list = field(default_factory=list)  # (project_id, iid, error)
+
+    def summary(self) -> str:
+        return (f"{self.new} new, {self.cached} unchanged, {self.skipped} skipped (too large), "
+                f"{len(self.failed)} failed")
+
+
 class Estimator:
     def __init__(self, cfg: Config, db: Database, gitlab, llm: LLMClient | None = None):
         self.cfg, self.db, self.gl, self.llm = cfg, db, gitlab, llm
+        self.last_outcome = ""  # "new" | "cached" | "skipped" after estimate()
+
+    def missing(self, since: str | None = None, until: str | None = None) -> list[tuple[int, int]]:
+        """MRs in the database without an estimate from the current model and prompt version
+        (most recent first). Works from the database alone; whether an existing estimate is
+        still current for a changed diff is only known after fetching the diff."""
+        from mrstat.queries import _window
+
+        params: list = [self.llm.model if self.llm else "", PROMPT_VERSION]
+        sql = ("SELECT m.project_id, m.iid FROM mrs m WHERE NOT EXISTS (SELECT 1 FROM llm_estimates l "
+               "WHERE l.project_id=m.project_id AND l.iid=m.iid AND l.model=? AND l.prompt_version=?)")
+        sql += _window("COALESCE(m.merged_at, m.updated_at)", since, until, params)
+        sql += " ORDER BY COALESCE(m.merged_at, m.updated_at) DESC"
+        with self.db.connect() as conn:
+            return [(r[0], r[1]) for r in conn.execute(sql, params)]
+
+    def run(self, targets, progress=None) -> EstimateRun:
+        """Estimate each (project_id, iid); unchanged inputs are not sent again."""
+        from mrstat.progress import Progress
+
+        progress = progress or Progress()
+        out = EstimateRun()
+        targets = list(dict.fromkeys(targets))  # de-duplicate, keep order
+        progress.phase("LLM estimates", len(targets))
+        for pid, iid in targets:
+            try:
+                self.estimate(pid, iid)
+                setattr(out, self.last_outcome, getattr(out, self.last_outcome) + 1)
+            except Exception as exc:  # noqa: BLE001
+                out.failed.append((pid, iid, str(exc)))
+                log.debug("LLM estimate failed for %s!%s", pid, iid, exc_info=True)
+                progress.note(f"LLM FAILED {pid}!{iid}: {exc}")
+            progress.advance(f"{pid}!{iid} ({out.new} new, {out.cached} unchanged)")
+        progress.done()
+        return out
 
     def prepare(self, project_id: int, iid: int) -> PreparedInput:
         with self.db.connect() as conn:
@@ -320,14 +368,17 @@ class Estimator:
         """Estimate and store. Returns the stored row (dict), or None if skipped."""
         if self.llm is None:
             raise ValueError("no LLM configured")
+        self.last_outcome = ""
         prep = self.prepare(project_id, iid)
         if prep.strategy == "skip":
             log.warning("%s!%s: %s", project_id, iid, "; ".join(prep.notes))
+            self.last_outcome = "skipped"
             return None
         if not force:
             hit = self.cached(prep)
             if hit:
                 log.info("%s!%s: estimate unchanged (cached)", project_id, iid)
+                self.last_outcome = "cached"
                 return dict(hit)
 
         p_tok = c_tok = calls = 0
@@ -384,6 +435,7 @@ class Estimator:
         }
         with self.db.connect() as conn:
             dbm.insert_llm_estimate(conn, row)
+        self.last_outcome = "new"
         return row
 
 

@@ -157,3 +157,34 @@ def test_prompt_contains_facts_table(env):
     text = Estimator(cfg, an.db, gl).prepare(1, 1).final_messages()[1]["content"]
     assert "src/parser.py | [code, python, modified] | raw +2 -1 | shown +2 -1" in text
     assert "package-lock.json" in text and "not shown: matches package-lock.json" in text
+
+
+def test_missing_and_run_outcomes(env):
+    cfg, an, gl = env
+    gl.add_mr(1, 2, [commit("b1", "Bob", "bob@corp", "2026-01-06T09:00:00Z")], title="APP-1 more",
+              merged_at="2026-01-07T10:00:00Z")
+    gl.diffs[(1, 2)] = [diff("src/b.py", "@@ -1 +1 @@\n-p\n+q\n")]
+    an.analyze_mr("grp/app", 2)
+    llm = FakeLLM([GOOD, GOOD, GOOD])
+    est = Estimator(cfg, an.db, gl, llm)
+    assert sorted(est.missing()) == [(1, 1), (1, 2)]
+    assert est.missing(until="2026-01-08T00:00:00Z") == [(1, 2)]
+    assert est.missing(since="2026-01-08T00:00:00Z") == [(1, 1)]
+
+    run = est.run([(1, 2)])
+    assert (run.new, run.cached, run.failed) == (1, 0, [])
+    assert est.missing() == [(1, 1)]
+
+    # MR 2 again (unchanged) + MR 1 (missing): one new LLM call only
+    run = est.run([(1, 2)] + est.missing() + [(1, 2)])
+    assert (run.new, run.cached) == (1, 1) and len(llm.calls) == 2
+    assert est.missing() == []
+    assert run.summary() == "1 new, 1 unchanged, 0 skipped (too large), 0 failed"
+
+    # another model counts as missing again
+    assert sorted(Estimator(cfg, an.db, gl, FakeLLM([], model="other")).missing()) == [(1, 1), (1, 2)]
+
+    # failures are collected, not raised
+    gl.diffs[(1, 2)] = [diff("src/b.py", "@@ -1 +1 @@\n-p\n+changed\n")]
+    run = Estimator(cfg, an.db, gl, FakeLLM(["not json", "still not json"])).run([(1, 2)])
+    assert run.new == 0 and len(run.failed) == 1
