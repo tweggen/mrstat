@@ -446,6 +446,10 @@ estimates during the sync, add `--llm` to the `serve` command. Data lives in the
 `/data` volume. JSON API: `/api/mrs`, `/api/persons`, `/api/mr/{project_id}/{iid}`,
 `/api/issue/{KEY}`, `/api/sync`.
 
+The merge request list shows the 10,000 most recent MRs matching the filter (field "max
+rows", or `?limit=` on the page and on `/api/mrs`). If more match, a note says so and the
+totals cover the shown rows only. 10,000 rows make a page of about 3 MB.
+
 The web UI has no authentication; put it behind your reverse proxy / SSO if needed.
 
 ## Things to set up per instance

@@ -17,7 +17,7 @@ def _window(col: str, since: str | None, until: str | None, params: list) -> str
 
 
 def mr_list(db: Database, since=None, until=None, project: str | None = None,
-            person: str | None = None, limit: int = 500) -> list[dict]:
+            person: str | None = None, limit: int = 10000) -> list[dict]:
     params: list = []
     sql = """
       SELECT m.project_id, m.iid, m.title, m.web_url, m.state, m.merged_at, m.target_branch,

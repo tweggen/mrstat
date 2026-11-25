@@ -28,6 +28,9 @@ def _date(value: str | None) -> str | None:
     return iso(parse_date_arg(value)) if value else None
 
 
+DEFAULT_LIST_LIMIT = 10000  # MRs shown on the start page / returned by /api/mrs
+
+
 def create_app(cfg: Config, analyzer_factory=None, sync_status: dict | None = None) -> FastAPI:
     """analyzer_factory: callable returning an Analyzer (with live GitLab/Jira clients);
     None disables on-demand analysis."""
@@ -47,11 +50,16 @@ def create_app(cfg: Config, analyzer_factory=None, sync_status: dict | None = No
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request, since: str | None = None, until: str | None = None,
-              project: str | None = None, person: str | None = None):
-        mrs = queries.mr_list(db, _date(since), _date(until), project or None, person or None)
+              project: str | None = None, person: str | None = None,
+              limit: int = DEFAULT_LIST_LIMIT):
+        limit = max(1, limit)
+        mrs = queries.mr_list(db, _date(since), _date(until), project or None, person or None,
+                              limit + 1)
+        truncated = len(mrs) > limit
+        mrs = mrs[:limit]
         return render(request, "index.html", mrs=mrs, since=since or "", until=until or "",
-                      project=project or "", person=person or "",
-                      total_hours=sum(m["hours"] for m in mrs))
+                      project=project or "", person=person or "", limit=limit,
+                      truncated=truncated, total_hours=sum(m["hours"] for m in mrs))
 
     @app.get("/persons", response_class=HTMLResponse)
     def persons(request: Request, since: str | None = None, until: str | None = None):
@@ -100,7 +108,7 @@ def create_app(cfg: Config, analyzer_factory=None, sync_status: dict | None = No
     # ---- JSON API
     @app.get("/api/mrs")
     def api_mrs(since: str | None = None, until: str | None = None, project: str | None = None,
-                person: str | None = None, limit: int = 500):
+                person: str | None = None, limit: int = DEFAULT_LIST_LIMIT):
         return queries.mr_list(db, _date(since), _date(until), project, person, limit)
 
     @app.get("/api/persons")

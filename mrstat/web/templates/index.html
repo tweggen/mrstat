@@ -5,6 +5,7 @@
   <label>until <input type="date" name="until" value="{{ until }}"></label>
   <label>project <input name="project" value="{{ project }}"></label>
   <label>person <input name="person" value="{{ person }}"></label>
+  <label>max rows <input type="number" name="limit" min="1" step="1000" value="{{ limit }}" style="width:7em"></label>
   <button type="submit">Filter</button>
 </form>
 <div class="grid">
@@ -12,6 +13,7 @@
   <div class="tile"><div class="v">{{ '%.1f'|format(total_hours) }}</div><div class="l">hours (commit heuristic)</div></div>
   <div class="tile"><div class="v">{{ '%.1f'|format(total_hours / hpd) }}</div><div class="l">person days</div></div>
 </div>
+{% if truncated %}<p class="warn">Showing the {{ limit }} most recent merge requests only; totals cover these rows. Narrow the filter or raise "max rows".</p>{% endif %}
 <table>
   <tr><th>Merged</th><th>MR</th><th>Title</th><th>Persons</th><th>Issues</th><th class="n">Commits</th><th class="n">Hours</th><th class="n">Days</th><th class="n">LLM h</th></tr>
   {% for m in mrs %}

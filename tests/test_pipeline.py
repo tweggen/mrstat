@@ -136,3 +136,20 @@ def test_web_pages(env):
                     headers={"content-type": "application/x-www-form-urlencoded"},
                     follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/mr/1/3"
+
+
+def test_web_list_limit(env):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from mrstat.web.app import create_app
+
+    cfg, an, gl, jira = env
+    for iid in (1, 2, 3):
+        an.analyze_mr("grp/app", iid)
+    client = TestClient(create_app(cfg, lambda: an))
+    assert "most recent merge requests only" not in client.get("/").text
+    page = client.get("/?limit=2").text
+    assert "Showing the 2 most recent merge requests only" in page
+    assert "grp/app!3" in page and "grp/app!1<" not in page
+    assert len(client.get("/api/mrs?limit=2").json()) == 2
